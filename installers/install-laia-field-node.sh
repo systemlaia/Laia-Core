@@ -45,6 +45,9 @@ fi
 laia_log "Copying CLI"
 rsync -a "$REPO_ROOT/cli/" "$LAIA_ROOT/core/cli/"
 
+laia_log "Copying sync package"
+rsync -a "$REPO_ROOT/sync/" "$LAIA_ROOT/core/sync/"
+
 laia_log "Copying starter vault scaffold"
 rsync -a "$REPO_ROOT/vault/" "$LAIA_ROOT/vault/"
 
@@ -63,11 +66,11 @@ cp "$REPO_ROOT/configs/sync/sync-config.yaml" "$LAIA_ROOT/core/configs/sync-conf
 
 laia_log "Configuring shell"
 laia_append_if_missing 'export LAIA_ROOT="$HOME/LAIA"' "$SHELL_RC"
-laia_append_if_missing 'alias laia="$HOME/LAIA/.venv/bin/python $HOME/LAIA/core/cli/laia.py"' "$SHELL_RC"
+laia_append_if_missing 'alias laia="PYTHONPATH=$HOME/LAIA/core $HOME/LAIA/.venv/bin/python $HOME/LAIA/core/cli/laia.py"' "$SHELL_RC"
 
 laia_log "Running sanity check"
 export LAIA_ROOT
-"$LAIA_ROOT/.venv/bin/python" "$LAIA_ROOT/core/cli/laia.py" doctor || {
+PYTHONPATH="$LAIA_ROOT/core" "$LAIA_ROOT/.venv/bin/python" "$LAIA_ROOT/core/cli/laia.py" doctor || {
   echo "ERROR: sanity check failed"
   exit 1
 }
