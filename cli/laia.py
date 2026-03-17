@@ -109,7 +109,7 @@ def today_plan_path():
     return plans_dir() / f"{date.today()}-plan.md"
 
 def briefing(_args=None):
-    print(f"\nLAIA DAILY BRIEFING — {date.today()}\n")
+    print(f"\\nLAIA DAILY BRIEFING — {date.today()}\\n")
     print("Commands:")
     print("- laia day")
     print("- laia focus")
@@ -158,9 +158,9 @@ def focus_task(args):
 
     candidates.sort(key=lambda x: x[0], reverse=True)
 
-    print("\nLAIA FOCUS\n")
+    print("\\nLAIA FOCUS\\n")
     if not candidates:
-        print("No matching ready tasks found.\n")
+        print("No matching ready tasks found.\\n")
         return
 
     score, task, project = candidates[0]
@@ -187,11 +187,11 @@ def plan_generate(_args=None):
     plan_path = today_plan_path()
 
     queued_ids = [t.get("id") for t in ready[:5]]
-    body = f"# Daily Plan {date.today()}\n\n## Tasks\n"
+    body = f"# Daily Plan {date.today()}\\n\\n## Tasks\\n"
     if ready:
-        body += "\n".join([f"- [ ] {t.get('title', 'Untitled')}" for t in ready[:5]]) + "\n"
+        body += "\\n".join([f"- [ ] {t.get('title', 'Untitled')}" for t in ready[:5]]) + "\\n"
     else:
-        body += "- No ready tasks found\n"
+        body += "- No ready tasks found\\n"
 
     fm = {
         "id": f"plan_{str(date.today()).replace('-', '_')}",
@@ -207,23 +207,23 @@ def plan_generate(_args=None):
         "updated_at": str(date.today()),
     }
 
-    content = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n" + body
+    content = "---\\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\\n\\n" + body
     plan_path.write_text(content, encoding="utf-8")
     print(f"Generated: {plan_path}")
 
 def plan_today(_args=None):
     path = today_plan_path()
     if not path.exists():
-        print("No plan found for today. Run: laia plan generate\n")
+        print("No plan found for today. Run: laia plan generate\\n")
         return
     print(path.read_text(encoding="utf-8"))
 
 def sync_status(_args=None):
-    print("\nLAIA SYNC STATUS\n")
+    print("\\nLAIA SYNC STATUS\\n")
     try:
         config = load_sync_config()
     except Exception as e:
-        print(f"Sync config error: {e}\n")
+        print(f"Sync config error: {e}\\n")
         return
 
     print(f"Core Host: {config.get('core_host')}")
@@ -234,7 +234,7 @@ def sync_status(_args=None):
     print("")
 
 def doctor(_args=None):
-    print("\nLAIA DOCTOR REPORT\n")
+    print("\\nLAIA DOCTOR REPORT\\n")
 
     checks = [
         ("LAIA root", LAIA_ROOT),
@@ -264,11 +264,11 @@ def doctor(_args=None):
     print("")
 
 def day_command(args):
-    print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
+    print(f"\\nLAIA DAY BRIEFING — {date.today()}\\n")
     print("System:")
     sync_status(args)
     if not today_plan_path().exists():
-        print("No daily plan found. Generating one.\n")
+        print("No daily plan found. Generating one.\\n")
         plan_generate(args)
     print("Focus:")
     focus_task(args)
