@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import sys
 import subprocess
 from pathlib import Path
 from datetime import date
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
+
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
+
 
 def load_frontmatter(path: Path):
     if not path.exists():
@@ -21,20 +29,25 @@ def load_frontmatter(path: Path):
     body = text[end + 5:]
     return fm, body
 
+
 def tasks_dir():
     return LAIA_ROOT / "vault" / "03 Tasks"
+
 
 def projects_dir():
     return LAIA_ROOT / "vault" / "02 Projects"
 
+
 def plans_dir():
     return LAIA_ROOT / "vault" / "04 Daily Plans"
+
 
 def load_yaml_file(path: Path):
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
 
 def load_sync_config():
     path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
@@ -43,12 +56,19 @@ def load_sync_config():
         raise FileNotFoundError(f"Missing sync config: {path}")
     return data
 
+
 def command_exists(name):
     try:
-        result = subprocess.run(["which", name], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["which", name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         return result.returncode == 0
     except Exception:
         return False
+
 
 def ssh_core_reachable(config):
     try:
@@ -68,17 +88,38 @@ def ssh_core_reachable(config):
     except Exception:
         return False
 
+
 def priority_score(value):
-    scores = {"Critical": 100, "High": 80, "Medium": 50, "Low": 20}
+    scores = {
+        "Critical": 100,
+        "High": 80,
+        "Medium": 50,
+        "Low": 20,
+    }
     return scores.get(value, 0)
+
 
 def time_score(value):
-    scores = {"15m": 20, "30m": 18, "1h": 15, "2h": 10, "Half Day": 5, "Full Day": 2}
+    scores = {
+        "15m": 20,
+        "30m": 18,
+        "1h": 15,
+        "2h": 10,
+        "Half Day": 5,
+        "Full Day": 2,
+    }
     return scores.get(value, 0)
 
+
 def momentum_score(value):
-    scores = {"High": 20, "Medium": 10, "Low": 5, "None": 0}
+    scores = {
+        "High": 20,
+        "Medium": 10,
+        "Low": 5,
+        "None": 0,
+    }
     return scores.get(value, 0)
+
 
 def parse_time_to_minutes(value):
     if not value:
@@ -94,6 +135,7 @@ def parse_time_to_minutes(value):
         return 480
     return None
 
+
 def load_projects_map():
     projects = {}
     proj_dir = projects_dir()
@@ -105,16 +147,19 @@ def load_projects_map():
             projects[fm["id"]] = fm
     return projects
 
+
 def today_plan_path():
     return plans_dir() / f"{date.today()}-plan.md"
 
+
 def briefing(_args=None):
-    print(f"\\nLAIA DAILY BRIEFING — {date.today()}\\n")
+    print(f"\nLAIA DAILY BRIEFING — {date.today()}\n")
     print("Commands:")
     print("- laia day")
     print("- laia focus")
     print("- laia sync status")
     print("")
+
 
 def focus_task(args):
     energy_filter = getattr(args, "energy", None)
@@ -158,9 +203,9 @@ def focus_task(args):
 
     candidates.sort(key=lambda x: x[0], reverse=True)
 
-    print("\\nLAIA FOCUS\\n")
+    print("\nLAIA FOCUS\n")
     if not candidates:
-        print("No matching ready tasks found.\\n")
+        print("No matching ready tasks found.\n")
         return
 
     score, task, project = candidates[0]
@@ -173,6 +218,7 @@ def focus_task(args):
     print(f"  Project: {project.get('title', task.get('project_id', 'Unknown'))}")
     print(f"  Score: {score}")
     print("")
+
 
 def plan_generate(_args=None):
     ready = []
@@ -187,11 +233,11 @@ def plan_generate(_args=None):
     plan_path = today_plan_path()
 
     queued_ids = [t.get("id") for t in ready[:5]]
-    body = f"# Daily Plan {date.today()}\\n\\n## Tasks\\n"
+    body = f"# Daily Plan {date.today()}\n\n## Tasks\n"
     if ready:
-        body += "\\n".join([f"- [ ] {t.get('title', 'Untitled')}" for t in ready[:5]]) + "\\n"
+        body += "\n".join([f"- [ ] {t.get('title', 'Untitled')}" for t in ready[:5]]) + "\n"
     else:
-        body += "- No ready tasks found\\n"
+        body += "- No ready tasks found\n"
 
     fm = {
         "id": f"plan_{str(date.today()).replace('-', '_')}",
@@ -207,34 +253,126 @@ def plan_generate(_args=None):
         "updated_at": str(date.today()),
     }
 
-    content = "---\\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\\n\\n" + body
+    content = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n" + body
     plan_path.write_text(content, encoding="utf-8")
     print(f"Generated: {plan_path}")
+
 
 def plan_today(_args=None):
     path = today_plan_path()
     if not path.exists():
-        print("No plan found for today. Run: laia plan generate\\n")
+        print("No plan found for today. Run: laia plan generate\n")
         return
     print(path.read_text(encoding="utf-8"))
 
+
 def sync_status(_args=None):
-    print("\\nLAIA SYNC STATUS\\n")
+    print("\nLAIA SYNC STATUS\n")
+    config_path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
+    reviews_dir = LAIA_ROOT / "operations" / "reviews"
+
     try:
-        config = load_sync_config()
+        status = engine_sync_status(config_path, LAIA_ROOT)
     except Exception as e:
-        print(f"Sync config error: {e}\\n")
+        print(f"Sync config error: {e}\n")
         return
 
-    print(f"Core Host: {config.get('core_host')}")
-    print(f"Core User: {config.get('core_user')}")
-    print(f"rsync available: {'Yes' if command_exists('rsync') else 'No'}")
-    print(f"ssh available: {'Yes' if command_exists('ssh') else 'No'}")
-    print(f"Core reachable: {'Yes' if ssh_core_reachable(config) else 'No'}")
+    print(f"Core Host: {status['core_host']}")
+    print(f"Core User: {status['core_user']}")
+    print(f"Core reachable: {'Yes' if status['core_reachable'] else 'No'}")
+    print(f"Pending conflicts: {status['pending_conflicts']}")
     print("")
 
+
+def sync_dry_run(args):
+    config_path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
+    reviews_dir = LAIA_ROOT / "operations" / "reviews"
+    direction = "pull" if getattr(args, "pull", False) else "push"
+
+    ok, lines, report = engine_sync_run(
+        config_path,
+        LAIA_ROOT,
+        reviews_dir,
+        direction=direction,
+        dry_run=True,
+    )
+
+    for line in lines[:40]:
+        print(line)
+
+    if len(lines) > 40:
+        print(f"... {len(lines) - 40} more lines")
+
+    if report:
+        print(f"\nReport: {report}\n")
+
+    if not ok:
+        raise SystemExit(1)
+
+
+def sync_push(_args=None):
+    config_path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
+    reviews_dir = LAIA_ROOT / "operations" / "reviews"
+
+    ok, lines, report = engine_sync_run(
+        config_path,
+        LAIA_ROOT,
+        reviews_dir,
+        direction="push",
+        dry_run=False,
+    )
+
+    for line in lines[:40]:
+        print(line)
+
+    if len(lines) > 40:
+        print(f"... {len(lines) - 40} more lines")
+
+    if report:
+        print(f"\nReport: {report}\n")
+
+    if not ok:
+        raise SystemExit(1)
+
+
+def sync_pull(_args=None):
+    config_path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
+    reviews_dir = LAIA_ROOT / "operations" / "reviews"
+
+    ok, lines, report = engine_sync_run(
+        config_path,
+        LAIA_ROOT,
+        reviews_dir,
+        direction="pull",
+        dry_run=False,
+    )
+
+    for line in lines[:40]:
+        print(line)
+
+    if len(lines) > 40:
+        print(f"... {len(lines) - 40} more lines")
+
+    if report:
+        print(f"\nReport: {report}\n")
+
+    if not ok:
+        raise SystemExit(1)
+
+
+def day_command(args):
+    print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
+    print("System:")
+    sync_status(args)
+    if not today_plan_path().exists():
+        print("No daily plan found. Generating one.\n")
+        plan_generate(args)
+    print("Focus:")
+    focus_task(args)
+
+
 def doctor(_args=None):
-    print("\\nLAIA DOCTOR REPORT\\n")
+    print("\nLAIA DOCTOR REPORT\n")
 
     checks = [
         ("LAIA root", LAIA_ROOT),
@@ -263,15 +401,6 @@ def doctor(_args=None):
 
     print("")
 
-def day_command(args):
-    print(f"\\nLAIA DAY BRIEFING — {date.today()}\\n")
-    print("System:")
-    sync_status(args)
-    if not today_plan_path().exists():
-        print("No daily plan found. Generating one.\\n")
-        plan_generate(args)
-    print("Focus:")
-    focus_task(args)
 
 def main():
     parser = argparse.ArgumentParser(prog="laia")
@@ -295,6 +424,12 @@ def main():
     sync_sub = sync_p.add_subparsers(dest="subcommand")
     sync_sub.add_parser("status")
 
+    sync_dry = sync_sub.add_parser("dry-run")
+    sync_dry.add_argument("--pull", action="store_true")
+
+    sync_sub.add_parser("push")
+    sync_sub.add_parser("pull")
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -311,8 +446,15 @@ def main():
         plan_today(args)
     elif args.command == "sync" and args.subcommand == "status":
         sync_status(args)
+    elif args.command == "sync" and args.subcommand == "dry-run":
+        sync_dry_run(args)
+    elif args.command == "sync" and args.subcommand == "push":
+        sync_push(args)
+    elif args.command == "sync" and args.subcommand == "pull":
+        sync_pull(args)
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
