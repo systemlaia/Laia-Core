@@ -1,0 +1,32 @@
+core_host: macmini-core.local
+core_user: paul
+core_root: /Users/paul/LAIA
+field_root: /Users/paul/LAIA
+
+domains:
+  structured_notes:
+    mode: two_way
+    paths:
+      - vault/00 Inbox
+      - vault/02 Projects
+      - vault/03 Tasks
+      - vault/05 Health
+      - vault/07 Opportunities
+
+  ingest:
+    mode: push_only
+    paths:
+      - operations/ingest
+
+  templates:
+    mode: pull_only
+    paths:
+      - templates
+      - core/configs
+      - vault/08 Systems
+
+  runtime:
+    mode: core_dominant
+    paths:
+      - operations/exports
+      - operations/reviews
