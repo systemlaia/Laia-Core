@@ -31,11 +31,15 @@ mkdir -p "$LAIA_ROOT/operations/exports"
 mkdir -p "$LAIA_ROOT/templates"
 mkdir -p "$LAIA_ROOT/archive"
 
+laia_log "Creating Python virtual environment"
+python3 -m venv "$LAIA_ROOT/.venv"
+
 laia_log "Installing Python dependencies"
+"$LAIA_ROOT/.venv/bin/pip" install --upgrade pip
 if [ -f "$REPO_ROOT/requirements.txt" ]; then
-  pip3 install -r "$REPO_ROOT/requirements.txt"
+  "$LAIA_ROOT/.venv/bin/pip" install -r "$REPO_ROOT/requirements.txt"
 else
-  pip3 install PyYAML
+  "$LAIA_ROOT/.venv/bin/pip" install PyYAML
 fi
 
 laia_log "Copying CLI"
@@ -59,11 +63,11 @@ cp "$REPO_ROOT/configs/sync/sync-config.yaml" "$LAIA_ROOT/core/configs/sync-conf
 
 laia_log "Configuring shell"
 laia_append_if_missing 'export LAIA_ROOT="$HOME/LAIA"' "$SHELL_RC"
-laia_append_if_missing 'alias laia="python3 $HOME/LAIA/core/cli/laia.py"' "$SHELL_RC"
+laia_append_if_missing 'alias laia="$HOME/LAIA/.venv/bin/python $HOME/LAIA/core/cli/laia.py"' "$SHELL_RC"
 
 laia_log "Running sanity check"
 export LAIA_ROOT
-python3 "$LAIA_ROOT/core/cli/laia.py" doctor || {
+"$LAIA_ROOT/.venv/bin/python" "$LAIA_ROOT/core/cli/laia.py" doctor || {
   echo "ERROR: sanity check failed"
   exit 1
 }
