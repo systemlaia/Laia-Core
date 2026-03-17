@@ -1,5 +1,5 @@
-core_host: macmini-core.local
-core_user: paul
+core_host: Pauls-Mac-mini.local
+core_user: iv
 core_root: /Users/paul/LAIA
 field_root: /Users/paul/LAIA
 
