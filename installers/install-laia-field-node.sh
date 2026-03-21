@@ -48,6 +48,9 @@ rsync -a "$REPO_ROOT/cli/" "$LAIA_ROOT/core/cli/"
 laia_log "Copying sync package"
 rsync -a "$REPO_ROOT/sync/" "$LAIA_ROOT/core/sync/"
 
+laia_log "Copying core client package"
+rsync -a "$REPO_ROOT/core_client/" "$LAIA_ROOT/core/core_client/"
+
 laia_log "Copying starter vault scaffold"
 rsync -a "$REPO_ROOT/vault/" "$LAIA_ROOT/vault/"
 
