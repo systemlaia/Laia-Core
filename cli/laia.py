@@ -30,10 +30,6 @@ def load_frontmatter(path: Path):
     return fm, body
 
 
-def inbox_dir():
-    return LAIA_ROOT / "vault" / "00 Inbox"
-
-
 def tasks_dir():
     return LAIA_ROOT / "vault" / "03 Tasks"
 
@@ -44,6 +40,10 @@ def projects_dir():
 
 def plans_dir():
     return LAIA_ROOT / "vault" / "04 Daily Plans"
+
+
+def inbox_dir():
+    return LAIA_ROOT / "vault" / "00 Inbox"
 
 
 def load_yaml_file(path: Path):
@@ -140,19 +140,6 @@ def parse_time_to_minutes(value):
     return None
 
 
-def slugify(text: str) -> str:
-    safe = []
-    for ch in text.lower():
-        if ch.isalnum():
-            safe.append(ch)
-        elif ch in (" ", "-", "_"):
-            safe.append("-")
-    slug = "".join(safe)
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug.strip("-") or "note"
-
-
 def load_projects_map():
     projects = {}
     proj_dir = projects_dir()
@@ -175,7 +162,7 @@ def briefing(_args=None):
     print("- laia day")
     print("- laia focus")
     print("- laia sync status")
-    print("- laia dictation note \"your note here\"")
+    print("- laia dictation note \"text here\"")
     print("")
 
 
@@ -285,36 +272,16 @@ def plan_today(_args=None):
 
 
 def dictation_note(args):
-    text = " ".join(args.text).strip()
-    if not text:
-        print("No note text provided.\n")
-        raise SystemExit(1)
+    target_dir = inbox_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-    inbox = inbox_dir()
-    inbox.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    content = " ".join(args.text).strip()
+    file_path = target_dir / f"{timestamp}.md"
 
-    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    title = text[:60].strip()
-    note_id = f"dictation_note_{ts}"
-    filename = f"{ts}-{slugify(title[:40])}.md"
-    path = inbox / filename
-
-    fm = {
-        "id": note_id,
-        "title": title,
-        "type": "captured_note",
-        "state": "Captured",
-        "capture_mode": "dictation_text",
-        "owner": "Paul",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-    body = f"# {title}\n\n{text}\n"
-    content = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n" + body
-    path.write_text(content, encoding="utf-8")
-
-    print(f"Saved dictation note: {path}")
+    body = f"# Note {timestamp}\n\n{content}\n"
+    file_path.write_text(body, encoding="utf-8")
+    print(f"Saved note: {file_path}")
 
 
 def sync_status(_args=None):
@@ -471,11 +438,6 @@ def main():
     plan_sub.add_parser("generate")
     plan_sub.add_parser("today")
 
-    dictation_p = sub.add_parser("dictation")
-    dictation_sub = dictation_p.add_subparsers(dest="subcommand")
-    dictation_note_p = dictation_sub.add_parser("note")
-    dictation_note_p.add_argument("text", nargs="+")
-
     sync_p = sub.add_parser("sync")
     sync_sub = sync_p.add_subparsers(dest="subcommand")
     sync_sub.add_parser("status")
@@ -486,9 +448,17 @@ def main():
     sync_sub.add_parser("push")
     sync_sub.add_parser("pull")
 
+    dictation_p = sub.add_parser("dictation")
+    dictation_sub = dictation_p.add_subparsers(dest="subcommand")
+    note_p = dictation_sub.add_parser("note")
+    note_p.add_argument("text", nargs="+")
+    note_p.set_defaults(func=dictation_note)
+
     args = parser.parse_args()
 
-    if args.command == "briefing":
+    if hasattr(args, "func"):
+        args.func(args)
+    elif args.command == "briefing":
         briefing(args)
     elif args.command == "doctor":
         doctor(args)
@@ -500,8 +470,6 @@ def main():
         plan_generate(args)
     elif args.command == "plan" and args.subcommand == "today":
         plan_today(args)
-    elif args.command == "dictation" and args.subcommand == "note":
-        dictation_note(args)
     elif args.command == "sync" and args.subcommand == "status":
         sync_status(args)
     elif args.command == "sync" and args.subcommand == "dry-run":
