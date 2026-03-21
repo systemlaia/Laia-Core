@@ -12,7 +12,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import ollama_generate, clean_note_text
+from core_client.ollama import ollama_generate, clean_note_text, structure_task
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -141,6 +141,20 @@ def parse_time_to_minutes(value):
     return None
 
 
+def slugify(value: str) -> str:
+    value = value.strip().lower()
+    chars = []
+    for ch in value:
+        if ch.isalnum():
+            chars.append(ch)
+        elif ch in (" ", "-", "_"):
+            chars.append("-")
+    slug = "".join(chars)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "task"
+
+
 def load_projects_map():
     projects = {}
     proj_dir = projects_dir()
@@ -165,6 +179,7 @@ def briefing(_args=None):
     print("- laia sync status")
     print('- laia test-model mistral "hello"')
     print('- laia dictation note "raw note text"')
+    print('- laia dictation task "raw task text"')
     print("")
 
 
@@ -383,10 +398,64 @@ def dictation_note(args):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     file_path = target_dir / f"dictation-note-{timestamp}.md"
 
-    body = f"# Dictation Note {timestamp}\n\n{cleaned}\n"
+    body = f"""---
+type: note
+source: dictation
+processed_by: mistral
+created_at: {datetime.now().isoformat()}
+---
+
+# Dictation Note
+
+{cleaned}
+"""
     file_path.write_text(body, encoding="utf-8")
 
     print(f"Saved note: {file_path}")
+    print("")
+
+
+def dictation_task(args):
+    raw_text = " ".join(args.text)
+    task = structure_task(raw_text, model="mistral")
+
+    target_dir = tasks_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    title = task.get("title", "Untitled Task").strip()
+    task_id = f"task_{timestamp.replace('-', '_').replace(':', '_')}_{slugify(title)[:40]}"
+    file_path = target_dir / f"{task_id}.md"
+
+    fm = {
+        "id": task_id,
+        "title": title,
+        "type": "task",
+        "state": "Ready",
+        "project_id": "",
+        "priority": task.get("priority", "Medium"),
+        "energy_type": task.get("energy_type", "Admin"),
+        "time_estimate": task.get("time_estimate", "30m"),
+        "dependency_ids": [],
+        "next_step_after": "",
+        "source": "dictation",
+        "processed_by": "mistral",
+        "owner": "Paul",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+    }
+
+    notes = task.get("notes", "").strip() or "Captured by dictation."
+
+    content = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n"
+    content += f"# {title}\n\n"
+    content += "## Notes\n"
+    content += f"{notes}\n"
+
+    file_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved task: {file_path}")
+    print(f"Title: {title}")
     print("")
 
 
@@ -471,6 +540,10 @@ def main():
     dict_note.add_argument("text", nargs="+")
     dict_note.set_defaults(func=dictation_note)
 
+    dict_task = dictation_sub.add_parser("task")
+    dict_task.add_argument("text", nargs="+")
+    dict_task.set_defaults(func=dictation_task)
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -497,6 +570,8 @@ def main():
         test_model(args)
     elif args.command == "dictation" and args.subcommand == "note":
         dictation_note(args)
+    elif args.command == "dictation" and args.subcommand == "task":
+        dictation_task(args)
     else:
         parser.print_help()
 

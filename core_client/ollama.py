@@ -72,3 +72,32 @@ Raw note:
 {raw_text}
 """
     return ollama_generate(model, prompt)
+
+
+def structure_task(raw_text: str, model: str = "mistral") -> dict:
+    prompt = f"""You are turning a rough dictated thought into a task for a system called LAIA.
+
+Return only valid JSON with exactly these keys:
+title
+notes
+priority
+time_estimate
+energy_type
+
+Rules:
+- title: short, actionable, imperative if possible
+- notes: 1-3 short sentences, plain text
+- priority: one of Critical, High, Medium, Low
+- time_estimate: one of 15m, 30m, 1h, 2h, Half Day, Full Day
+- energy_type: one of Deep Work, Admin, Errands, Creative, Research, Maintenance
+- preserve the user's intent
+- do not invent project IDs or dependencies
+- no markdown
+- no extra keys
+- no explanation
+
+Raw input:
+{raw_text}
+"""
+    response = ollama_generate(model, prompt)
+    return json.loads(response)
