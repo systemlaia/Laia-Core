@@ -271,6 +271,51 @@ def plan_today(_args=None):
     print(path.read_text(encoding="utf-8"))
 
 
+
+
+def dictation_process_note(args):
+    import requests
+    import os
+
+    LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", Path.home() / "LAIA"))
+
+    # Load core config
+    runtime_config = LAIA_ROOT / "core" / "configs" / "core-services.yaml"
+    repo_config = REPO_ROOT / "configs" / "core" / "core-services.yaml"
+
+    if runtime_config.exists():
+        config_path = runtime_config
+    elif repo_config.exists():
+        config_path = repo_config
+    else:
+        print("Missing core-services.yaml")
+        return
+
+    import yaml
+    config = yaml.safe_load(config_path.read_text())
+    ollama_host = config.get("ollama_host")
+
+    prompt = f"Clean and improve this note for clarity:\n\n{ ' '.join(args.text) }"
+
+    try:
+        response = requests.post(
+            f"{ollama_host}/api/generate",
+            json={
+                "model": "mistral",
+                "prompt": prompt,
+                "stream": False
+            }
+        )
+
+        result = response.json()
+        print("\n--- Cleaned Note ---\n")
+        print(result.get("response", "").strip())
+        print("")
+
+    except Exception as e:
+        print(f"Error contacting core: {e}")
+
+
 def dictation_note(args):
     target_dir = inbox_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -451,6 +496,12 @@ def main():
     dictation_p = sub.add_parser("dictation")
     dictation_sub = dictation_p.add_subparsers(dest="subcommand")
     note_p = dictation_sub.add_parser("note")
+    note_p.add_argument("text", nargs="+")
+    note_p.set_defaults(func=dictation_note)
+
+    process_p = dictation_sub.add_parser("process-note")
+    process_p.add_argument("text", nargs="+")
+    process_p.set_defaults(func=dictation_process_note)
     note_p.add_argument("text", nargs="+")
     note_p.set_defaults(func=dictation_note)
 
