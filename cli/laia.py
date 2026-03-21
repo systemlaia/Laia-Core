@@ -4,7 +4,7 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +12,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
+from core_client.ollama import ollama_generate
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -40,10 +41,6 @@ def projects_dir():
 
 def plans_dir():
     return LAIA_ROOT / "vault" / "04 Daily Plans"
-
-
-def inbox_dir():
-    return LAIA_ROOT / "vault" / "00 Inbox"
 
 
 def load_yaml_file(path: Path):
@@ -162,7 +159,7 @@ def briefing(_args=None):
     print("- laia day")
     print("- laia focus")
     print("- laia sync status")
-    print("- laia dictation note \"text here\"")
+    print("- laia test-model mistral \"hello\"")
     print("")
 
 
@@ -271,64 +268,6 @@ def plan_today(_args=None):
     print(path.read_text(encoding="utf-8"))
 
 
-
-
-def dictation_process_note(args):
-    import requests
-    import os
-
-    LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", Path.home() / "LAIA"))
-
-    # Load core config
-    runtime_config = LAIA_ROOT / "core" / "configs" / "core-services.yaml"
-    repo_config = REPO_ROOT / "configs" / "core" / "core-services.yaml"
-
-    if runtime_config.exists():
-        config_path = runtime_config
-    elif repo_config.exists():
-        config_path = repo_config
-    else:
-        print("Missing core-services.yaml")
-        return
-
-    import yaml
-    config = yaml.safe_load(config_path.read_text())
-    ollama_host = config.get("ollama_host")
-
-    prompt = f"Clean and improve this note for clarity:\n\n{ ' '.join(args.text) }"
-
-    try:
-        response = requests.post(
-            f"{ollama_host}/api/generate",
-            json={
-                "model": "mistral",
-                "prompt": prompt,
-                "stream": False
-            }
-        )
-
-        result = response.json()
-        print("\n--- Cleaned Note ---\n")
-        print(result.get("response", "").strip())
-        print("")
-
-    except Exception as e:
-        print(f"Error contacting core: {e}")
-
-
-def dictation_note(args):
-    target_dir = inbox_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    content = " ".join(args.text).strip()
-    file_path = target_dir / f"{timestamp}.md"
-
-    body = f"# Note {timestamp}\n\n{content}\n"
-    file_path.write_text(body, encoding="utf-8")
-    print(f"Saved note: {file_path}")
-
-
 def sync_status(_args=None):
     print("\nLAIA SYNC STATUS\n")
     config_path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
@@ -422,6 +361,13 @@ def sync_pull(_args=None):
         raise SystemExit(1)
 
 
+def test_model(args):
+    prompt = " ".join(args.prompt)
+    response = ollama_generate(args.model, prompt)
+    print(response)
+    print("")
+
+
 def day_command(args):
     print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
     print("System:")
@@ -439,7 +385,6 @@ def doctor(_args=None):
     checks = [
         ("LAIA root", LAIA_ROOT),
         ("vault", LAIA_ROOT / "vault"),
-        ("inbox", inbox_dir()),
         ("projects notes", projects_dir()),
         ("tasks notes", tasks_dir()),
         ("dashboard note", LAIA_ROOT / "vault" / "01 Dashboard" / "mission-control.md"),
@@ -493,23 +438,13 @@ def main():
     sync_sub.add_parser("push")
     sync_sub.add_parser("pull")
 
-    dictation_p = sub.add_parser("dictation")
-    dictation_sub = dictation_p.add_subparsers(dest="subcommand")
-    note_p = dictation_sub.add_parser("note")
-    note_p.add_argument("text", nargs="+")
-    note_p.set_defaults(func=dictation_note)
-
-    process_p = dictation_sub.add_parser("process-note")
-    process_p.add_argument("text", nargs="+")
-    process_p.set_defaults(func=dictation_process_note)
-    note_p.add_argument("text", nargs="+")
-    note_p.set_defaults(func=dictation_note)
+    test_model_p = sub.add_parser("test-model")
+    test_model_p.add_argument("model")
+    test_model_p.add_argument("prompt", nargs="+")
 
     args = parser.parse_args()
 
-    if hasattr(args, "func"):
-        args.func(args)
-    elif args.command == "briefing":
+    if args.command == "briefing":
         briefing(args)
     elif args.command == "doctor":
         doctor(args)
@@ -529,6 +464,8 @@ def main():
         sync_push(args)
     elif args.command == "sync" and args.subcommand == "pull":
         sync_pull(args)
+    elif args.command == "test-model":
+        test_model(args)
     else:
         parser.print_help()
 
