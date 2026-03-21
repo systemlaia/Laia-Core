@@ -64,6 +64,11 @@ cp "$REPO_ROOT/configs/node/field-node.yaml" "$LAIA_ROOT/core/configs/node.yaml"
 laia_log "Copying sync config"
 cp "$REPO_ROOT/configs/sync/sync-config.yaml" "$LAIA_ROOT/core/configs/sync-config.yaml"
 
+if [ -f "$REPO_ROOT/configs/core/core-services.yaml" ]; then
+  laia_log "Copying core services config"
+  cp "$REPO_ROOT/configs/core/core-services.yaml" "$LAIA_ROOT/core/configs/core-services.yaml"
+fi
+
 laia_log "Configuring shell"
 laia_append_if_missing 'export LAIA_ROOT="$HOME/LAIA"' "$SHELL_RC"
 laia_append_if_missing 'alias laia="PYTHONPATH=$HOME/LAIA/core $HOME/LAIA/.venv/bin/python $HOME/LAIA/core/cli/laia.py"' "$SHELL_RC"
