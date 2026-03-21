@@ -4,7 +4,7 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +12,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import ollama_generate
+from core_client.ollama import ollama_generate, clean_note_text
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -41,6 +41,10 @@ def projects_dir():
 
 def plans_dir():
     return LAIA_ROOT / "vault" / "04 Daily Plans"
+
+
+def inbox_dir():
+    return LAIA_ROOT / "vault" / "00 Inbox"
 
 
 def load_yaml_file(path: Path):
@@ -159,7 +163,8 @@ def briefing(_args=None):
     print("- laia day")
     print("- laia focus")
     print("- laia sync status")
-    print("- laia test-model mistral \"hello\"")
+    print('- laia test-model mistral "hello"')
+    print('- laia dictation note "raw note text"')
     print("")
 
 
@@ -368,6 +373,23 @@ def test_model(args):
     print("")
 
 
+def dictation_note(args):
+    raw_text = " ".join(args.text)
+    cleaned = clean_note_text(raw_text, model="mistral")
+
+    target_dir = inbox_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    file_path = target_dir / f"dictation-note-{timestamp}.md"
+
+    body = f"# Dictation Note {timestamp}\n\n{cleaned}\n"
+    file_path.write_text(body, encoding="utf-8")
+
+    print(f"Saved note: {file_path}")
+    print("")
+
+
 def day_command(args):
     print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
     print("System:")
@@ -442,6 +464,13 @@ def main():
     test_model_p.add_argument("model")
     test_model_p.add_argument("prompt", nargs="+")
 
+    dictation_p = sub.add_parser("dictation")
+    dictation_sub = dictation_p.add_subparsers(dest="subcommand")
+
+    dict_note = dictation_sub.add_parser("note")
+    dict_note.add_argument("text", nargs="+")
+    dict_note.set_defaults(func=dictation_note)
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -466,6 +495,8 @@ def main():
         sync_pull(args)
     elif args.command == "test-model":
         test_model(args)
+    elif args.command == "dictation" and args.subcommand == "note":
+        dictation_note(args)
     else:
         parser.print_help()
 

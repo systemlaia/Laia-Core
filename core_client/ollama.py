@@ -54,3 +54,21 @@ def ollama_generate(model: str, prompt: str) -> str:
         data = json.loads(resp.read().decode("utf-8"))
 
     return data.get("response", "").strip()
+
+
+def clean_note_text(raw_text: str, model: str = "mistral") -> str:
+    prompt = f"""You are cleaning a dictated personal note for a system called LAIA.
+
+Task:
+- Rewrite the note into clean, readable Markdown.
+- Preserve the user's meaning.
+- Fix obvious transcription problems.
+- Keep it concise but do not remove important details.
+- Do not invent facts.
+- Do not add commentary.
+- Return only the cleaned note body in Markdown.
+
+Raw note:
+{raw_text}
+"""
+    return ollama_generate(model, prompt)
