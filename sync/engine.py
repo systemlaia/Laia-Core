@@ -5,6 +5,11 @@ from sync.conflict import process_incoming_conflicts, detect_markdown_conflicts
 from sync.manifests import write_sync_report
 
 
+def remote_safe_path(path: str) -> str:
+    return path.replace(" ", r"\ ")
+
+
+
 def sync_domain(config, local_root: Path, domain_name: str, domain_cfg: dict, direction="push", dry_run=False):
     remote_base = f"{config['core_user']}@{config['core_host']}:{config['core_root']}"
     mode = domain_cfg.get("mode")
@@ -19,12 +24,12 @@ def sync_domain(config, local_root: Path, domain_name: str, domain_cfg: dict, di
                 lines.append(f"SKIP {domain_name}: {rel_path} (mode={mode})")
                 continue
             source = str(local_path) + "/"
-            destination = f"{remote_base}/{rel_path}/"
+            destination = f"{remote_base}/{remote_safe_path(rel_path)}/"
         else:
             if mode in ("push_only",):
                 lines.append(f"SKIP {domain_name}: {rel_path} (mode={mode})")
                 continue
-            source = f"{remote_base}/{rel_path}/"
+            source = f"{remote_base}/{remote_safe_path(rel_path)}/"
             destination = str(local_path) + "/"
 
         local_path.mkdir(parents=True, exist_ok=True)
