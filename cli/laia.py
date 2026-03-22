@@ -276,6 +276,16 @@ def focus_task(args):
     print(f"  Score: {score}")
     print("")
 
+    if len(candidates) > 1:
+        print("Top Alternatives:")
+        for alt_score, alt_task, alt_project in candidates[1:4]:
+            print(f"- {alt_task.get('title', 'Untitled')} "
+                  f"[{alt_task.get('priority', 'Unknown')}, "
+                  f"{alt_task.get('time_estimate', 'Unknown')}, "
+                  f"{alt_task.get('energy_type', 'Unknown')}] "
+                  f"Score={alt_score}")
+        print("")
+
 
 def plan_generate(_args=None):
     ready = []
