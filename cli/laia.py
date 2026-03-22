@@ -611,6 +611,61 @@ portion: {meal.get("portion", "Unknown")}
     print("")
 
 
+
+
+def dev_inbox(_args):
+    d = requests_dir()
+    if not d.exists():
+        print("No requests directory found.")
+        return
+
+    files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+
+    print("\nLAIA DEV INBOX\n")
+
+    if not files:
+        print("No pending requests.\n")
+        return
+
+    for f in files[:10]:
+        print(f"- {f.name}")
+    print("")
+
+
+def dev_result(args):
+    req_file = args.request_file
+    text_body = " ".join(args.text)
+
+    req_path = requests_dir() / req_file
+
+    if not req_path.exists():
+        print(f"Request not found: {req_file}")
+        return
+
+    target_dir = results_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    result_file = f"dev-result-{timestamp}-{req_file.replace('dev-request', '')}"
+    result_path = target_dir / result_file
+
+    content = f"""---
+type: dev_result
+source_request: {req_file}
+created_at: {datetime.now().isoformat()}
+owner: Paul
+---
+
+# Dev Result
+
+## Response
+{text_body}
+"""
+
+    result_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved result: {result_path}")
+    print("")
 def dev_request(args):
     target_dir = requests_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -752,6 +807,7 @@ def main():
     dict_meal.add_argument("text", nargs="+")
     dict_meal.set_defaults(func=dictation_meal)
 
+    
     dev_p = sub.add_parser("dev")
     dev_sub = dev_p.add_subparsers(dest="subcommand")
 
@@ -759,6 +815,15 @@ def main():
     dev_request_p.add_argument("text", nargs="+")
     dev_request_p.add_argument("--type", dest="request_type", default="feature_plan")
     dev_request_p.set_defaults(func=dev_request)
+
+    dev_inbox_p = dev_sub.add_parser("inbox")
+    dev_inbox_p.set_defaults(func=dev_inbox)
+
+    dev_result_p = dev_sub.add_parser("result")
+    dev_result_p.add_argument("request_file")
+    dev_result_p.add_argument("text", nargs="+")
+    dev_result_p.set_defaults(func=dev_result)
+
 
     args = parser.parse_args()
 
@@ -790,8 +855,14 @@ def main():
         dictation_task(args)
     elif args.command == "dictation" and args.subcommand == "meal":
         dictation_meal(args)
+    
     elif args.command == "dev" and args.subcommand == "request":
         dev_request(args)
+    elif args.command == "dev" and args.subcommand == "inbox":
+        dev_inbox(args)
+    elif args.command == "dev" and args.subcommand == "result":
+        dev_result(args)
+
     else:
         parser.print_help()
 
