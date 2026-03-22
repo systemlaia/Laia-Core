@@ -614,16 +614,19 @@ portion: {meal.get("portion", "Unknown")}
 
 
 
+
 def extract_request_goal(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
-    marker = "## Goal\n"
+    marker = "## Goal
+"
     if marker not in text:
         return text.strip()
     after = text.split(marker, 1)[1]
-    if "\n## " in after:
-        return after.split("\n## ", 1)[0].strip()
+    if "
+## " in after:
+        return after.split("
+## ", 1)[0].strip()
     return after.strip()
-
 
 
 def repo_file_snapshot(limit: int = 80) -> str:
@@ -645,7 +648,8 @@ def repo_file_snapshot(limit: int = 80) -> str:
 
         repo_files.append(rel_str)
 
-    return "\n".join(repo_files[:limit])
+    return "
+".join(repo_files[:limit])
 
 
 def build_dev_response(goal_text: str, model: str = "mistral") -> str:
@@ -669,113 +673,22 @@ Briefly explain what the request is asking for.
 Give a safe repo-first plan.
 
 ## Likely Files
-List only files that exist in the repository snapshot above.
+List only exact file paths that exist in the repository snapshot above.
 
 ## Next Command
 Give the single best next command or action.
 
 Rules:
 - do not invent files, folders, components, or services
-- only mention files from the repository snapshot
-- do NOT use wildcards or globs (e.g., no *.yaml)
-- use exact file paths only
-- if unsure of the exact file, say "uncertain" rather than guessing
+- only mention exact file paths from the repository snapshot
+- do NOT use wildcards or globs
+- if unsure of the exact file, say "uncertain"
 - do not claim changes were already made
 - do not claim tests were already run
 - keep it practical and specific to LAIA
-- if the exact file is uncertain, say so explicitly
 """
     return ollama_generate(model, prompt)
 
-
-def dev_process_latest(args):
-    d = requests_dir()
-    if not d.exists():
-        print("No requests directory found.")
-        return
-
-def dev_process_file(args):
-    req_name = args.request_file
-    req_path = requests_dir() / req_name
-
-    if not req_path.exists():
-        print(f"Request not found: {req_name}")
-        return
-
-    goal = extract_request_goal(req_path)
-    response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
-
-    target_dir = results_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    result_name = f"dev-result-{timestamp}-{req_name.replace('dev-request-', '')}"
-    result_path = target_dir / result_name
-
-    content = f"""---
-type: dev_result
-source_request: {req_name}
-created_at: {datetime.now().isoformat()}
-owner: Paul
-processed_by: {getattr(args, "model", "mistral")}
-status: generated
----
-
-# Dev Result
-
-## Source Request
-{req_name}
-
-## Response
-{response}
-"""
-
-    result_path.write_text(content, encoding="utf-8")
-
-    print(f"Processed request: {req_name}")
-    print(f"Saved result: {result_path}")
-    print("")
-
-
-    files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
-    if not files:
-        print("No pending requests.")
-        return
-
-    req_path = files[0]
-    goal = extract_request_goal(req_path)
-    response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
-
-    target_dir = results_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    result_name = f"dev-result-{timestamp}-{req_path.name.replace('dev-request-', '')}"
-    result_path = target_dir / result_name
-
-    content = f"""---
-type: dev_result
-source_request: {req_path.name}
-created_at: {datetime.now().isoformat()}
-owner: Paul
-processed_by: {getattr(args, "model", "mistral")}
-status: generated
----
-
-# Dev Result
-
-## Source Request
-{req_path.name}
-
-## Response
-{response}
-"""
-
-    result_path.write_text(content, encoding="utf-8")
-
-    print(f"Processed request: {req_path.name}")
-    print(f"Saved result: {result_path}")
-    print("")
 
 def dev_inbox(_args):
     d = requests_dir()
@@ -785,10 +698,13 @@ def dev_inbox(_args):
 
     files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
 
-    print("\nLAIA DEV INBOX\n")
+    print("
+LAIA DEV INBOX
+")
 
     if not files:
-        print("No pending requests.\n")
+        print("No pending requests.
+")
         return
 
     for f in files[:10]:
@@ -830,40 +746,95 @@ owner: Paul
 
     print(f"Saved result: {result_path}")
     print("")
-def dev_request(args):
-    target_dir = requests_dir()
+
+
+def dev_process_latest(args):
+    d = requests_dir()
+    if not d.exists():
+        print("No requests directory found.")
+        return
+
+    files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not files:
+        print("No pending requests.")
+        return
+
+    req_path = files[0]
+    goal = extract_request_goal(req_path)
+    response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
+
+    target_dir = results_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    slug = slugify(" ".join(args.text))[:50]
-    file_path = target_dir / f"dev-request-{timestamp}-{slug}.md"
-
-    request_type = getattr(args, "request_type", "feature_plan")
-    body = " ".join(args.text)
+    result_name = f"dev-result-{timestamp}-{req_path.name.replace('dev-request-', '')}"
+    result_path = target_dir / result_name
 
     content = f"""---
-type: dev_request
-request_type: {request_type}
-source: field_node
-status: queued
+type: dev_result
+source_request: {req_path.name}
 created_at: {datetime.now().isoformat()}
 owner: Paul
+processed_by: {getattr(args, "model", "mistral")}
+status: generated
 ---
 
-# Dev Request
+# Dev Result
 
-## Goal
-{body}
+## Source Request
+{req_path.name}
 
-## Constraints
-- repo-first
-- preserve working behavior unless explicitly changed
-- keep changes auditable
+## Response
+{response}
 """
 
-    file_path.write_text(content, encoding="utf-8")
+    result_path.write_text(content, encoding="utf-8")
 
-    print(f"Saved dev request: {file_path}")
+    print(f"Processed request: {req_path.name}")
+    print(f"Saved result: {result_path}")
+    print("")
+
+
+def dev_process_file(args):
+    req_name = args.request_file
+    req_path = requests_dir() / req_name
+
+    if not req_path.exists():
+        print(f"Request not found: {req_name}")
+        return
+
+    goal = extract_request_goal(req_path)
+    response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
+
+    target_dir = results_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    result_name = f"dev-result-{timestamp}-{req_name.replace('dev-request-', '')}"
+    result_path = target_dir / result_name
+
+    content = f"""---
+type: dev_result
+source_request: {req_name}
+created_at: {datetime.now().isoformat()}
+owner: Paul
+processed_by: {getattr(args, "model", "mistral")}
+status: generated
+---
+
+# Dev Result
+
+## Source Request
+{req_name}
+
+## Response
+{response}
+"""
+
+    result_path.write_text(content, encoding="utf-8")
+
+    print(f"Processed request: {req_name}")
+    print(f"Saved result: {result_path}")
     print("")
 
 
