@@ -180,6 +180,31 @@ def today_plan_path():
     return plans_dir() / f"{date.today()}-plan.md"
 
 
+
+def count_ready_tasks():
+    count = 0
+    if tasks_dir().exists():
+        for note in tasks_dir().glob("*.md"):
+            fm, _ = load_frontmatter(note)
+            if fm.get("state") == "Ready":
+                count += 1
+    return count
+
+
+def count_recent_files(directory: Path, hours: int = 24):
+    if not directory.exists():
+        return 0
+
+    now = datetime.now().timestamp()
+    threshold = hours * 3600
+
+    count = 0
+    for f in directory.glob("*.md"):
+        if f.stat().st_mtime >= now - threshold:
+            count += 1
+    return count
+
+
 def briefing(_args=None):
     print(f"\nLAIA DAILY BRIEFING — {date.today()}\n")
     print("Commands:")
@@ -507,11 +532,24 @@ portion: {meal.get("portion", "Unknown")}
 
 def day_command(args):
     print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
+
     print("System:")
     sync_status(args)
+
+    print("Overview:")
+    tasks = count_ready_tasks()
+    notes = count_recent_files(inbox_dir(), 24)
+    meals = count_recent_files(health_dir(), 24)
+
+    print(f"- Ready tasks: {tasks}")
+    print(f"- Notes (24h): {notes}")
+    print(f"- Meals (24h): {meals}")
+    print("")
+
     if not today_plan_path().exists():
         print("No daily plan found. Generating one.\n")
         plan_generate(args)
+
     print("Focus:")
     focus_task(args)
 
