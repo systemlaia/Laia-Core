@@ -677,6 +677,9 @@ Give the single best next command or action.
 Rules:
 - do not invent files, folders, components, or services
 - only mention files from the repository snapshot
+- do NOT use wildcards or globs (e.g., no *.yaml)
+- use exact file paths only
+- if unsure of the exact file, say "uncertain" rather than guessing
 - do not claim changes were already made
 - do not claim tests were already run
 - keep it practical and specific to LAIA
@@ -690,6 +693,49 @@ def dev_process_latest(args):
     if not d.exists():
         print("No requests directory found.")
         return
+
+def dev_process_file(args):
+    req_name = args.request_file
+    req_path = requests_dir() / req_name
+
+    if not req_path.exists():
+        print(f"Request not found: {req_name}")
+        return
+
+    goal = extract_request_goal(req_path)
+    response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
+
+    target_dir = results_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    result_name = f"dev-result-{timestamp}-{req_name.replace('dev-request-', '')}"
+    result_path = target_dir / result_name
+
+    content = f"""---
+type: dev_result
+source_request: {req_name}
+created_at: {datetime.now().isoformat()}
+owner: Paul
+processed_by: {getattr(args, "model", "mistral")}
+status: generated
+---
+
+# Dev Result
+
+## Source Request
+{req_name}
+
+## Response
+{response}
+"""
+
+    result_path.write_text(content, encoding="utf-8")
+
+    print(f"Processed request: {req_name}")
+    print(f"Saved result: {result_path}")
+    print("")
+
 
     files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
     if not files:
@@ -946,6 +992,11 @@ def main():
     dev_process_p.add_argument("--model", default="mistral")
     dev_process_p.set_defaults(func=dev_process_latest)
 
+    dev_process_file_p = dev_sub.add_parser("process")
+    dev_process_file_p.add_argument("request_file")
+    dev_process_file_p.add_argument("--model", default="mistral")
+    dev_process_file_p.set_defaults(func=dev_process_file)
+
 
     args = parser.parse_args()
 
@@ -986,6 +1037,8 @@ def main():
         dev_result(args)
     elif args.command == "dev" and args.subcommand == "process-latest":
         dev_process_latest(args)
+    elif args.command == "dev" and args.subcommand == "process":
+        dev_process_file(args)
 
     else:
         parser.print_help()
