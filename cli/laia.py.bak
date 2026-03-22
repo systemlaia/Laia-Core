@@ -12,7 +12,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import ollama_generate, clean_note_text, structure_task
+from core_client.ollama import (
+    ollama_generate,
+    clean_note_text,
+    structure_task,
+    structure_meal,
+)
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -45,6 +50,18 @@ def plans_dir():
 
 def inbox_dir():
     return LAIA_ROOT / "vault" / "00 Inbox"
+
+
+def health_dir():
+    return LAIA_ROOT / "vault" / "05 Health"
+
+
+def requests_dir():
+    return LAIA_ROOT / "operations" / "requests"
+
+
+def results_dir():
+    return LAIA_ROOT / "operations" / "results"
 
 
 def load_yaml_file(path: Path):
@@ -152,7 +169,70 @@ def slugify(value: str) -> str:
     slug = "".join(chars)
     while "--" in slug:
         slug = slug.replace("--", "-")
-    return slug.strip("-") or "task"
+    return slug.strip("-") or "item"
+
+
+def count_ready_tasks():
+    count = 0
+    if tasks_dir().exists():
+        for note in tasks_dir().glob("*.md"):
+            fm, _ = load_frontmatter(note)
+            if fm.get("state") == "Ready":
+                count += 1
+    return count
+
+
+def count_recent_files(directory: Path, hours: int = 24):
+    if not directory.exists():
+        return 0
+
+    now = datetime.now().timestamp()
+    threshold = hours * 3600
+
+    count = 0
+    for f in directory.glob("*.md"):
+        if f.stat().st_mtime >= now - threshold:
+            count += 1
+    return count
+
+
+def get_recent_meal_energy(hours: int = 6):
+    if not health_dir().exists():
+        return None
+
+    files = sorted(
+        health_dir().glob("meal-*.md"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True
+    )
+
+    if not files:
+        return None
+
+    latest = files[0]
+    fm, body = load_frontmatter(latest)
+
+    energy = (body or "").lower()
+
+    if "low energy" in energy:
+        return "low"
+    if "tired" in energy:
+        return "low"
+    if "good energy" in energy:
+        return "high"
+    if "energized" in energy:
+        return "high"
+
+    return None
+
+
+def get_energy_label():
+    state = get_recent_meal_energy()
+    if state == "low":
+        return "Low"
+    if state == "high":
+        return "High"
+    return "Neutral"
 
 
 def load_projects_map():
@@ -180,6 +260,8 @@ def briefing(_args=None):
     print('- laia test-model mistral "hello"')
     print('- laia dictation note "raw note text"')
     print('- laia dictation task "raw task text"')
+    print('- laia dictation meal "raw meal text"')
+    print('- laia dev request "goal text"')
     print("")
 
 
@@ -221,11 +303,35 @@ def focus_task(args):
             if project.get("state") == "Active":
                 score += 10
 
+            energy_state = get_recent_meal_energy()
+
+            if energy_state == "low":
+                if fm.get("energy_type") == "Deep Work":
+                    score -= 20
+                if parse_time_to_minutes(fm.get("time_estimate") or "") and parse_time_to_minutes(fm.get("time_estimate")) > 60:
+                    score -= 10
+
+            if energy_state == "high":
+                if fm.get("energy_type") == "Deep Work":
+                    score += 10
+
             candidates.append((score, fm, project))
 
     candidates.sort(key=lambda x: x[0], reverse=True)
 
     print("\nLAIA FOCUS\n")
+    active_filters = []
+    if energy_filter:
+        active_filters.append(f"energy={energy_filter}")
+    if project_filter:
+        active_filters.append(f"project={project_filter}")
+    if max_time_filter:
+        active_filters.append(f"max_time={max_time_filter}")
+
+    if active_filters:
+        print("Filters: " + ", ".join(active_filters))
+        print("")
+
     if not candidates:
         print("No matching ready tasks found.\n")
         return
@@ -240,6 +346,16 @@ def focus_task(args):
     print(f"  Project: {project.get('title', task.get('project_id', 'Unknown'))}")
     print(f"  Score: {score}")
     print("")
+
+    if len(candidates) > 1:
+        print("Top Alternatives:")
+        for alt_score, alt_task, alt_project in candidates[1:4]:
+            print(f"- {alt_task.get('title', 'Untitled')} "
+                  f"[{alt_task.get('priority', 'Unknown')}, "
+                  f"{alt_task.get('time_estimate', 'Unknown')}, "
+                  f"{alt_task.get('energy_type', 'Unknown')}] "
+                  f"Score={alt_score}")
+        print("")
 
 
 def plan_generate(_args=None):
@@ -422,9 +538,9 @@ def dictation_task(args):
     target_dir = tasks_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     title = task.get("title", "Untitled Task").strip()
-    task_id = f"task_{timestamp.replace('-', '_').replace(':', '_')}_{slugify(title)[:40]}"
+    task_id = f"task_{timestamp}_{slugify(title)[:40]}"
     file_path = target_dir / f"{task_id}.md"
 
     fm = {
@@ -459,13 +575,156 @@ def dictation_task(args):
     print("")
 
 
+def dictation_meal(args):
+    raw_text = " ".join(args.text)
+    meal = structure_meal(raw_text, model="mistral")
+
+    target_dir = health_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    file_path = target_dir / f"meal-{timestamp}.md"
+
+    content = f"""---
+type: meal
+source: dictation
+processed_by: mistral
+created_at: {datetime.now().isoformat()}
+meal_type: {meal.get("meal_type", "Unknown")}
+portion: {meal.get("portion", "Unknown")}
+---
+
+# {meal.get("meal_summary", "Meal")}
+
+## Ingredients
+{meal.get("ingredients", "")}
+
+## Notes
+{meal.get("notes", "")}
+
+## Energy Effect
+{meal.get("energy_effect", "")}
+"""
+    file_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved meal: {file_path}")
+    print("")
+
+
+
+
+def dev_inbox(_args):
+    d = requests_dir()
+    if not d.exists():
+        print("No requests directory found.")
+        return
+
+    files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+
+    print("\nLAIA DEV INBOX\n")
+
+    if not files:
+        print("No pending requests.\n")
+        return
+
+    for f in files[:10]:
+        print(f"- {f.name}")
+    print("")
+
+
+def dev_result(args):
+    req_file = args.request_file
+    text_body = " ".join(args.text)
+
+    req_path = requests_dir() / req_file
+
+    if not req_path.exists():
+        print(f"Request not found: {req_file}")
+        return
+
+    target_dir = results_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    result_file = f"dev-result-{timestamp}-{req_file.replace('dev-request', '')}"
+    result_path = target_dir / result_file
+
+    content = f"""---
+type: dev_result
+source_request: {req_file}
+created_at: {datetime.now().isoformat()}
+owner: Paul
+---
+
+# Dev Result
+
+## Response
+{text_body}
+"""
+
+    result_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved result: {result_path}")
+    print("")
+def dev_request(args):
+    target_dir = requests_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = slugify(" ".join(args.text))[:50]
+    file_path = target_dir / f"dev-request-{timestamp}-{slug}.md"
+
+    request_type = getattr(args, "request_type", "feature_plan")
+    body = " ".join(args.text)
+
+    content = f"""---
+type: dev_request
+request_type: {request_type}
+source: field_node
+status: queued
+created_at: {datetime.now().isoformat()}
+owner: Paul
+---
+
+# Dev Request
+
+## Goal
+{body}
+
+## Constraints
+- repo-first
+- preserve working behavior unless explicitly changed
+- keep changes auditable
+"""
+
+    file_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved dev request: {file_path}")
+    print("")
+
+
 def day_command(args):
     print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
+
     print("System:")
     sync_status(args)
+
+    print("Overview:")
+    energy = get_energy_label()
+    print(f"- Energy: {energy}")
+    tasks = count_ready_tasks()
+    notes = count_recent_files(inbox_dir(), 24)
+    meals = count_recent_files(health_dir(), 24)
+
+    print(f"- Ready tasks: {tasks}")
+    print(f"- Notes (24h): {notes}")
+    print(f"- Meals (24h): {meals}")
+    print("")
+
     if not today_plan_path().exists():
         print("No daily plan found. Generating one.\n")
         plan_generate(args)
+
     print("Focus:")
     focus_task(args)
 
@@ -544,6 +803,28 @@ def main():
     dict_task.add_argument("text", nargs="+")
     dict_task.set_defaults(func=dictation_task)
 
+    dict_meal = dictation_sub.add_parser("meal")
+    dict_meal.add_argument("text", nargs="+")
+    dict_meal.set_defaults(func=dictation_meal)
+
+    
+    dev_p = sub.add_parser("dev")
+    dev_sub = dev_p.add_subparsers(dest="subcommand")
+
+    dev_request_p = dev_sub.add_parser("request")
+    dev_request_p.add_argument("text", nargs="+")
+    dev_request_p.add_argument("--type", dest="request_type", default="feature_plan")
+    dev_request_p.set_defaults(func=dev_request)
+
+    dev_inbox_p = dev_sub.add_parser("inbox")
+    dev_inbox_p.set_defaults(func=dev_inbox)
+
+    dev_result_p = dev_sub.add_parser("result")
+    dev_result_p.add_argument("request_file")
+    dev_result_p.add_argument("text", nargs="+")
+    dev_result_p.set_defaults(func=dev_result)
+
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -572,50 +853,19 @@ def main():
         dictation_note(args)
     elif args.command == "dictation" and args.subcommand == "task":
         dictation_task(args)
+    elif args.command == "dictation" and args.subcommand == "meal":
+        dictation_meal(args)
+    
+    elif args.command == "dev" and args.subcommand == "request":
+        dev_request(args)
+    elif args.command == "dev" and args.subcommand == "inbox":
+        dev_inbox(args)
+    elif args.command == "dev" and args.subcommand == "result":
+        dev_result(args)
+
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
     main()
-
-from core_client.ollama import structure_meal
-
-def health_dir():
-    return LAIA_ROOT / "vault" / "05 Health"
-
-def dictation_meal(args):
-    raw_text = " ".join(args.text)
-    meal = structure_meal(raw_text, model="mistral")
-
-    target_dir = health_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    file_path = target_dir / f"meal-{timestamp}.md"
-
-    content = f"""---
-type: meal
-source: dictation
-processed_by: mistral
-created_at: {datetime.now().isoformat()}
-meal_type: {meal.get("meal_type", "Unknown")}
-portion: {meal.get("portion", "Unknown")}
----
-
-# {meal.get("meal_summary", "Meal")}
-
-## Ingredients
-{meal.get("ingredients", "")}
-
-## Notes
-{meal.get("notes", "")}
-
-## Energy Effect
-{meal.get("energy_effect", "")}
-"""
-
-    file_path.write_text(content, encoding="utf-8")
-
-    print(f"Saved meal: {file_path}")
-    print("")
