@@ -617,8 +617,7 @@ portion: {meal.get("portion", "Unknown")}
 
 def extract_request_goal(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
-    marker = "## Goal
-"
+    marker = "## Goal\n"
     if marker not in text:
         return text.strip()
     after = text.split(marker, 1)[1]
