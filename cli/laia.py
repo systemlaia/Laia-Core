@@ -195,6 +195,36 @@ def count_recent_files(directory: Path, hours: int = 24):
     if not directory.exists():
         return 0
 
+def get_recent_meal_energy(hours: int = 6):
+    if not health_dir().exists():
+        return None
+
+    files = sorted(
+        health_dir().glob("meal-*.md"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True
+    )
+
+    if not files:
+        return None
+
+    latest = files[0]
+    fm, body = load_frontmatter(latest)
+
+    energy = (body or "").lower()
+
+    if "low energy" in energy:
+        return "low"
+    if "tired" in energy:
+        return "low"
+    if "good energy" in energy:
+        return "high"
+    if "energized" in energy:
+        return "high"
+
+    return None
+
+
     now = datetime.now().timestamp()
     threshold = hours * 3600
 
@@ -256,7 +286,22 @@ def focus_task(args):
             if project.get("state") == "Active":
                 score += 10
 
+            
+            # Health-aware adjustment
+            energy_state = get_recent_meal_energy()
+
+            if energy_state == "low":
+                if fm.get("energy_type") == "Deep Work":
+                    score -= 20
+                if parse_time_to_minutes(fm.get("time_estimate") or "") and parse_time_to_minutes(fm.get("time_estimate")) > 60:
+                    score -= 10
+
+            if energy_state == "high":
+                if fm.get("energy_type") == "Deep Work":
+                    score += 10
+
             candidates.append((score, fm, project))
+
 
     candidates.sort(key=lambda x: x[0], reverse=True)
 
