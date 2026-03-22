@@ -12,7 +12,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import ollama_generate, clean_note_text, structure_task
+from core_client.ollama import (
+    ollama_generate,
+    clean_note_text,
+    structure_task,
+    structure_meal,
+)
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -45,6 +50,10 @@ def plans_dir():
 
 def inbox_dir():
     return LAIA_ROOT / "vault" / "00 Inbox"
+
+
+def health_dir():
+    return LAIA_ROOT / "vault" / "05 Health"
 
 
 def load_yaml_file(path: Path):
@@ -152,7 +161,7 @@ def slugify(value: str) -> str:
     slug = "".join(chars)
     while "--" in slug:
         slug = slug.replace("--", "-")
-    return slug.strip("-") or "task"
+    return slug.strip("-") or "item"
 
 
 def load_projects_map():
@@ -180,6 +189,7 @@ def briefing(_args=None):
     print('- laia test-model mistral "hello"')
     print('- laia dictation note "raw note text"')
     print('- laia dictation task "raw task text"')
+    print('- laia dictation meal "raw meal text"')
     print("")
 
 
@@ -422,9 +432,9 @@ def dictation_task(args):
     target_dir = tasks_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     title = task.get("title", "Untitled Task").strip()
-    task_id = f"task_{timestamp.replace('-', '_').replace(':', '_')}_{slugify(title)[:40]}"
+    task_id = f"task_{timestamp}_{slugify(title)[:40]}"
     file_path = target_dir / f"{task_id}.md"
 
     fm = {
@@ -456,6 +466,42 @@ def dictation_task(args):
 
     print(f"Saved task: {file_path}")
     print(f"Title: {title}")
+    print("")
+
+
+def dictation_meal(args):
+    raw_text = " ".join(args.text)
+    meal = structure_meal(raw_text, model="mistral")
+
+    target_dir = health_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    file_path = target_dir / f"meal-{timestamp}.md"
+
+    content = f"""---
+type: meal
+source: dictation
+processed_by: mistral
+created_at: {datetime.now().isoformat()}
+meal_type: {meal.get("meal_type", "Unknown")}
+portion: {meal.get("portion", "Unknown")}
+---
+
+# {meal.get("meal_summary", "Meal")}
+
+## Ingredients
+{meal.get("ingredients", "")}
+
+## Notes
+{meal.get("notes", "")}
+
+## Energy Effect
+{meal.get("energy_effect", "")}
+"""
+    file_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved meal: {file_path}")
     print("")
 
 
@@ -544,6 +590,10 @@ def main():
     dict_task.add_argument("text", nargs="+")
     dict_task.set_defaults(func=dictation_task)
 
+    dict_meal = dictation_sub.add_parser("meal")
+    dict_meal.add_argument("text", nargs="+")
+    dict_meal.set_defaults(func=dictation_meal)
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -572,6 +622,8 @@ def main():
         dictation_note(args)
     elif args.command == "dictation" and args.subcommand == "task":
         dictation_task(args)
+    elif args.command == "dictation" and args.subcommand == "meal":
+        dictation_meal(args)
     else:
         parser.print_help()
 

@@ -101,3 +101,34 @@ Raw input:
 """
     response = ollama_generate(model, prompt)
     return json.loads(response)
+
+
+def structure_meal(raw_text: str, model: str = "mistral") -> dict:
+    prompt = f"""You are structuring a meal log for a system called LAIA.
+
+Return only valid JSON with exactly these keys:
+meal_summary
+meal_type
+ingredients
+portion
+energy_effect
+notes
+
+Rules:
+- meal_summary: short description
+- meal_type: one of Breakfast, Lunch, Dinner, Snack, Unknown
+- ingredients: short comma-separated list
+- portion: one of Small, Medium, Large, Unknown
+- energy_effect: short phrase or empty string
+- notes: 1-2 short sentences, plain text
+- preserve the user's meaning
+- do not invent nutrition facts
+- no markdown
+- no extra keys
+- no explanation
+
+Raw input:
+{raw_text}
+"""
+    response = ollama_generate(model, prompt)
+    return json.loads(response)
