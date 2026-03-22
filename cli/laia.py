@@ -625,12 +625,40 @@ def extract_request_goal(path: Path) -> str:
     return after.strip()
 
 
+
+def repo_file_snapshot(limit: int = 80) -> str:
+    repo_files = []
+    for path in sorted(REPO_ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(REPO_ROOT)
+        rel_str = str(rel)
+
+        if rel_str.startswith(".git/"):
+            continue
+        if rel_str.endswith(".pyc"):
+            continue
+        if "/__pycache__/" in rel_str:
+            continue
+        if rel_str.startswith(".venv/"):
+            continue
+
+        repo_files.append(rel_str)
+
+    return "\n".join(repo_files[:limit])
+
+
 def build_dev_response(goal_text: str, model: str = "mistral") -> str:
+    repo_files = repo_file_snapshot()
+
     prompt = f"""You are the development operator for a system called LAIA.
 
 The user submitted this development request:
 
 {goal_text}
+
+Here is a snapshot of real files that exist in the repository:
+{repo_files}
 
 Write a concise implementation response with these sections in plain Markdown:
 
@@ -641,16 +669,18 @@ Briefly explain what the request is asking for.
 Give a safe repo-first plan.
 
 ## Likely Files
-List the files most likely to change.
+List only files that exist in the repository snapshot above.
 
 ## Next Command
 Give the single best next command or action.
 
 Rules:
-- do not invent that changes were already made
-- do not claim to have run tests
-- keep it practical
-- no code blocks unless absolutely necessary
+- do not invent files, folders, components, or services
+- only mention files from the repository snapshot
+- do not claim changes were already made
+- do not claim tests were already run
+- keep it practical and specific to LAIA
+- if the exact file is uncertain, say so explicitly
 """
     return ollama_generate(model, prompt)
 
