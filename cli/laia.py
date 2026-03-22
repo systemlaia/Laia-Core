@@ -315,6 +315,18 @@ def focus_task(args):
     candidates.sort(key=lambda x: x[0], reverse=True)
 
     print("\nLAIA FOCUS\n")
+    active_filters = []
+    if energy_filter:
+        active_filters.append(f"energy={energy_filter}")
+    if project_filter:
+        active_filters.append(f"project={project_filter}")
+    if max_time_filter:
+        active_filters.append(f"max_time={max_time_filter}")
+
+    if active_filters:
+        print("Filters: " + ", ".join(active_filters))
+        print("")
+
     if not candidates:
         print("No matching ready tasks found.\n")
         return
