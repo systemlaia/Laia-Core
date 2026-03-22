@@ -30,3 +30,9 @@ domains:
     paths:
       - operations/exports
       - operations/reviews
+
+  dev_queue:
+    mode: two_way
+    paths:
+      - operations/requests
+      - operations/results
