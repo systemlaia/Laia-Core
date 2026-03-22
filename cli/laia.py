@@ -56,6 +56,14 @@ def health_dir():
     return LAIA_ROOT / "vault" / "05 Health"
 
 
+def requests_dir():
+    return LAIA_ROOT / "operations" / "requests"
+
+
+def results_dir():
+    return LAIA_ROOT / "operations" / "results"
+
+
 def load_yaml_file(path: Path):
     if not path.exists():
         return None
@@ -164,23 +172,6 @@ def slugify(value: str) -> str:
     return slug.strip("-") or "item"
 
 
-def load_projects_map():
-    projects = {}
-    proj_dir = projects_dir()
-    if not proj_dir.exists():
-        return projects
-    for note in sorted(proj_dir.glob("*.md")):
-        fm, _ = load_frontmatter(note)
-        if fm and fm.get("id"):
-            projects[fm["id"]] = fm
-    return projects
-
-
-def today_plan_path():
-    return plans_dir() / f"{date.today()}-plan.md"
-
-
-
 def count_ready_tasks():
     count = 0
     if tasks_dir().exists():
@@ -195,18 +186,19 @@ def count_recent_files(directory: Path, hours: int = 24):
     if not directory.exists():
         return 0
 
+    now = datetime.now().timestamp()
+    threshold = hours * 3600
+
+    count = 0
+    for f in directory.glob("*.md"):
+        if f.stat().st_mtime >= now - threshold:
+            count += 1
+    return count
+
+
 def get_recent_meal_energy(hours: int = 6):
     if not health_dir().exists():
         return None
-
-def get_energy_label():
-    state = get_recent_meal_energy()
-    if state == "low":
-        return "Low"
-    if state == "high":
-        return "High"
-    return "Neutral"
-
 
     files = sorted(
         health_dir().glob("meal-*.md"),
@@ -234,14 +226,29 @@ def get_energy_label():
     return None
 
 
-    now = datetime.now().timestamp()
-    threshold = hours * 3600
+def get_energy_label():
+    state = get_recent_meal_energy()
+    if state == "low":
+        return "Low"
+    if state == "high":
+        return "High"
+    return "Neutral"
 
-    count = 0
-    for f in directory.glob("*.md"):
-        if f.stat().st_mtime >= now - threshold:
-            count += 1
-    return count
+
+def load_projects_map():
+    projects = {}
+    proj_dir = projects_dir()
+    if not proj_dir.exists():
+        return projects
+    for note in sorted(proj_dir.glob("*.md")):
+        fm, _ = load_frontmatter(note)
+        if fm and fm.get("id"):
+            projects[fm["id"]] = fm
+    return projects
+
+
+def today_plan_path():
+    return plans_dir() / f"{date.today()}-plan.md"
 
 
 def briefing(_args=None):
@@ -254,6 +261,7 @@ def briefing(_args=None):
     print('- laia dictation note "raw note text"')
     print('- laia dictation task "raw task text"')
     print('- laia dictation meal "raw meal text"')
+    print('- laia dev request "goal text"')
     print("")
 
 
@@ -295,8 +303,6 @@ def focus_task(args):
             if project.get("state") == "Active":
                 score += 10
 
-            
-            # Health-aware adjustment
             energy_state = get_recent_meal_energy()
 
             if energy_state == "low":
@@ -310,7 +316,6 @@ def focus_task(args):
                     score += 10
 
             candidates.append((score, fm, project))
-
 
     candidates.sort(key=lambda x: x[0], reverse=True)
 
@@ -606,6 +611,43 @@ portion: {meal.get("portion", "Unknown")}
     print("")
 
 
+def dev_request(args):
+    target_dir = requests_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = slugify(" ".join(args.text))[:50]
+    file_path = target_dir / f"dev-request-{timestamp}-{slug}.md"
+
+    request_type = getattr(args, "request_type", "feature_plan")
+    body = " ".join(args.text)
+
+    content = f"""---
+type: dev_request
+request_type: {request_type}
+source: field_node
+status: queued
+created_at: {datetime.now().isoformat()}
+owner: Paul
+---
+
+# Dev Request
+
+## Goal
+{body}
+
+## Constraints
+- repo-first
+- preserve working behavior unless explicitly changed
+- keep changes auditable
+"""
+
+    file_path.write_text(content, encoding="utf-8")
+
+    print(f"Saved dev request: {file_path}")
+    print("")
+
+
 def day_command(args):
     print(f"\nLAIA DAY BRIEFING — {date.today()}\n")
 
@@ -710,6 +752,14 @@ def main():
     dict_meal.add_argument("text", nargs="+")
     dict_meal.set_defaults(func=dictation_meal)
 
+    dev_p = sub.add_parser("dev")
+    dev_sub = dev_p.add_subparsers(dest="subcommand")
+
+    dev_request_p = dev_sub.add_parser("request")
+    dev_request_p.add_argument("text", nargs="+")
+    dev_request_p.add_argument("--type", dest="request_type", default="feature_plan")
+    dev_request_p.set_defaults(func=dev_request)
+
     args = parser.parse_args()
 
     if args.command == "briefing":
@@ -740,6 +790,8 @@ def main():
         dictation_task(args)
     elif args.command == "dictation" and args.subcommand == "meal":
         dictation_meal(args)
+    elif args.command == "dev" and args.subcommand == "request":
+        dev_request(args)
     else:
         parser.print_help()
 

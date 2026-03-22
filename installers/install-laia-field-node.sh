@@ -52,6 +52,8 @@ mkdir -p "$LAIA_ROOT/operations/ingest/meals"
 mkdir -p "$LAIA_ROOT/operations/ingest/unsorted"
 mkdir -p "$LAIA_ROOT/operations/reviews"
 mkdir -p "$LAIA_ROOT/operations/exports"
+mkdir -p "$LAIA_ROOT/operations/requests"
+mkdir -p "$LAIA_ROOT/operations/results"
 
 mkdir -p "$LAIA_ROOT/templates"
 mkdir -p "$LAIA_ROOT/archive"
