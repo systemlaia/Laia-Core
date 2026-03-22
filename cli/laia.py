@@ -199,6 +199,15 @@ def get_recent_meal_energy(hours: int = 6):
     if not health_dir().exists():
         return None
 
+def get_energy_label():
+    state = get_recent_meal_energy()
+    if state == "low":
+        return "Low"
+    if state == "high":
+        return "High"
+    return "Neutral"
+
+
     files = sorted(
         health_dir().glob("meal-*.md"),
         key=lambda f: f.stat().st_mtime,
@@ -592,6 +601,8 @@ def day_command(args):
     sync_status(args)
 
     print("Overview:")
+    energy = get_energy_label()
+    print(f"- Energy: {energy}")
     tasks = count_ready_tasks()
     notes = count_recent_files(inbox_dir(), 24)
     meals = count_recent_files(health_dir(), 24)
