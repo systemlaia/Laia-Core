@@ -738,11 +738,19 @@ status: generated
 
 
     files = sorted(d.glob("dev-request-*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
-    if not files:
-        print("No pending requests.")
+
+    # Filter only queued requests
+    queued = []
+    for f in files:
+        fm, _ = load_frontmatter(f)
+        if fm.get("status", "queued") == "queued":
+            queued.append(f)
+
+    if not queued:
+        print("No queued requests.")
         return
 
-    req_path = files[0]
+    req_path = queued[0]
     goal = extract_request_goal(req_path)
     response = build_dev_response(goal, model=getattr(args, "model", "mistral"))
 
