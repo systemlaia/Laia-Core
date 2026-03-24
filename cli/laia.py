@@ -772,10 +772,28 @@ status: generated
 """
 
     result_path.write_text(content, encoding="utf-8")
+    update_request_status(
+        req_path,
+        status="processed",
+        processed_by=getattr(args, "model", "mistral"),
+        latest_result=result_path.name,
+    )
 
     print(f"Processed request: {req_path.name}")
     print(f"Saved result: {result_path}")
     print("")
+
+
+def update_request_status(req_path: Path, *, status: str, processed_by: str, latest_result: str):
+    fm, body = load_frontmatter(req_path)
+
+    fm["status"] = status
+    fm["processed_at"] = datetime.now().isoformat()
+    fm["processed_by"] = processed_by
+    fm["latest_result"] = latest_result
+
+    content = "---\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True) + "---\n\n" + body
+    req_path.write_text(content, encoding="utf-8")
 
 def dev_inbox(_args):
     d = requests_dir()
