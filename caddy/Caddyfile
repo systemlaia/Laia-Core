@@ -1,0 +1,27 @@
+:80 {
+  encode gzip
+
+  handle / {
+    reverse_proxy homepage:3000
+  }
+
+  handle_path /ai/* {
+    reverse_proxy open-webui:8080
+  }
+
+  handle_path /portainer/* {
+    reverse_proxy portainer:9443 {
+      transport http {
+        tls_insecure_skip_verify
+      }
+    }
+  }
+
+  handle_path /files/* {
+    reverse_proxy filebrowser:80
+  }
+
+  handle_path /n8n/* {
+    reverse_proxy n8n:5678
+  }
+}

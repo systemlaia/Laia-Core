@@ -1,0 +1,16 @@
+- Core:
+    - Homepage:
+        href: http://localhost:4000
+        description: LAIA dashboard
+    - Open WebUI:
+        href: http://localhost:3000
+        description: Local AI console
+    - Portainer:
+        href: https://localhost:9443
+        description: Container management
+    - Filebrowser:
+        href: http://localhost:8080
+        description: Archive and project files
+    - n8n:
+        href: http://localhost:5678
+        description: Automation layer

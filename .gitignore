@@ -1,2 +1,23 @@
-__pycache__/
-*.pyc
+.env
+**/.DS_Store
+**/Thumbs.db
+
+# runtime data
+ollama/data/
+open-webui/data/
+portainer/data/
+postgres/data/
+redis/data/
+n8n/data/
+paperless/data/
+paperless/media/
+paperless/export/
+paperless/consume/
+filebrowser/database.db
+caddy/data/
+caddy/config/
+
+# optional local archive content
+archive/nas/
+archive/ingest/
+archive/projects/
