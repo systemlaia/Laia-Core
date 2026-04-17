@@ -10,7 +10,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./archive:/archive:ro
     environment:
-      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS}
+      - HOMEPAGE_ALLOWED_HOSTS=localhost:4000,localhost
     networks:
       - laia
 

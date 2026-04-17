@@ -21,3 +21,19 @@ caddy/config/
 archive/nas/
 archive/ingest/
 archive/projects/
+
+# Runtime logs
+homepage/config/logs/
+*.log
+
+# Backups
+backups/
+
+# Local env
+.env
+
+# Docker data (if present locally)
+**/data/
+
+# macOS
+.DS_Store
