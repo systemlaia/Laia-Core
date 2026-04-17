@@ -1,0 +1,153 @@
+services:
+  caddy:
+    image: caddy:2
+    container_name: laia-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    depends_on:
+      - homepage
+      - open-webui
+      - portainer
+      - filebrowser
+      - n8n
+    networks:
+      - laia
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: laia-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama/data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+    networks:
+      - laia
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: laia-open-webui
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+    volumes:
+      - ./open-webui/data:/app/backend/data
+    ports:
+      - "3000:8080"
+    networks:
+      - laia
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: laia-homepage
+    restart: unless-stopped
+    ports:
+      - "4000:3000"
+    volumes:
+      - ./homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./archive:/archive:ro
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS}
+    networks:
+      - laia
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: laia-portainer
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./portainer/data:/data
+    networks:
+      - laia
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: laia-filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./archive:/srv
+      - ./filebrowser:/config
+    command:
+      - --root=/srv
+      - --database=/config/database.db
+    networks:
+      - laia
+
+  postgres:
+    image: postgres:16
+    container_name: laia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - laia
+
+  redis:
+    image: redis:7-alpine
+    container_name: laia-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./redis/data:/data
+    networks:
+      - laia
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: laia-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      GENERIC_TIMEZONE: America/Los_Angeles
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      QUEUE_BULL_REDIS_HOST: redis
+    volumes:
+      - ./n8n/data:/home/node/.n8n
+      - ./archive:/archive
+    networks:
+      - laia
+
+networks:
+  laia:
+    driver: bridge
