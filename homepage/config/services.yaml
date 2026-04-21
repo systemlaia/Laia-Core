@@ -1,16 +1,78 @@
+- Models:
+    - Ollama API:
+        href: http://Pauls-Mac-mini.local:11434
+        description: Local model runtime
+
+    - Model Console:
+        href: http://Pauls-Mac-mini.local:3000
+        description: Open WebUI
+
+    - Default Chat:
+        href: http://Pauls-Mac-mini.local:3000
+        description: llama3:latest
+
+    - Writing / Planning:
+        href: http://Pauls-Mac-mini.local:3000
+        description: qwen2.5:7b
+
+    - Fast General:
+        href: http://Pauls-Mac-mini.local:3000
+        description: mistral:latest
+
+    - Lightweight Utility:
+        href: http://Pauls-Mac-mini.local:3000
+        description: phi4-mini:latest
+
+    - Vision:
+        href: http://Pauls-Mac-mini.local:3000
+        description: llava:latest
+
 - Core:
     - Homepage:
-        href: http://localhost:4000
+        href: http://Pauls-Mac-mini.local:4001
         description: LAIA dashboard
-    - Open WebUI:
-        href: http://localhost:3000
-        description: Local AI console
+
     - Filebrowser:
-        href: http://localhost:8080
+        href: http://Pauls-Mac-mini.local:8081
         description: Archive and project files
+
     - n8n:
-        href: http://localhost:5678
+        href: http://Pauls-Mac-mini.local:5678
         description: Automation layer
+
     - Portainer:
-        href: https://localhost:9443
+        href: https://Pauls-Mac-mini.local:9443
         description: Container management
+
+- Home:
+    - Home Assistant:
+        icon: home-assistant.png
+        href: http://homeassistant.local:8123
+        description: LAIA Live System State
+        widget:
+          type: homeassistant
+          url: http://homeassistant.local:8123
+          key: "123456789abcdef"
+          custom:
+            - state: binary_sensor.rpi_power_status
+              label: Pi Power
+            - state: binary_sensor.zigbee2mqtt_bridge_connection_state
+              label: Zigbee
+            - state: sensor.backup_backup_manager_state
+              label: Backups
+            - state: sensor.0xb0ce1814036c5cf4_power
+              label: Power Load
+
+    - Home Assistant Overview:
+        icon: home-assistant.png
+        href: http://homeassistant.local:8123
+        description: Full system view
+
+- System:
+    - Model Registry:
+        href: http://Pauls-Mac-mini.local:8081
+        description: LAIA model roles
+
+    - Docker Logs:
+        href: https://Pauls-Mac-mini.local:9443
+        description: Container logs via Portainer

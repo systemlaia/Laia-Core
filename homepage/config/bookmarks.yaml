@@ -1,4 +1,15 @@
-- Dev:
-    - GitHub:
-        - abbr: GH
-          href: https://github.com/
+- LAIA:
+    - Core:
+        - abbr: WEB
+          href: http://pauls-mac-mini.local:3000
+        - abbr: HP
+          href: http://pauls-mac-mini.local:4001
+        - abbr: HA
+          href: http://pauls-mac-mini.loca:8123
+
+- Docs:
+    - Self-Hosted:
+        - abbr: HPG
+          href: https://gethomepage.dev/
+        - abbr: HAI
+          href: https://www.home-assistant.io/

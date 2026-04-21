@@ -1,4 +1,26 @@
+- greeting:
+    text_size: xl
+    text: LAIA Core
+
+- datetime:
+    text_size: xl
+    format:
+      timeStyle: short
+      dateStyle: long
+
+- search:
+    provider: google
+    target: _blank
+
 - resources:
     cpu: true
     memory: true
     disk: /
+
+- openmeteo:
+    label: Los Angeles
+    latitude: 34.0522
+    longitude: -118.2437
+    timezone: America/Los_Angeles
+    units: imperial
+    cache: 10

@@ -16,6 +16,7 @@ mkdir -p filebrowser
 mkdir -p homepage/config
 mkdir -p ollama/data open-webui/data portainer/data postgres/data redis/data n8n/data
 mkdir -p archive/ingest archive/projects archive/nas
+mkdir -p models notes
 
 chmod +x scripts/*.sh 2>/dev/null || true
 
@@ -24,8 +25,8 @@ chmod +x scripts/*.sh 2>/dev/null || true
 
 echo
 echo "Deployment complete."
-echo "Homepage   : http://localhost:4000"
+echo "Homepage   : http://localhost:4001"
 echo "Open WebUI : http://localhost:3000"
-echo "Filebrowser: http://localhost:8080"
+echo "Filebrowser: http://localhost:8081"
 echo "n8n        : http://localhost:5678"
 echo "Portainer  : https://localhost:9443"

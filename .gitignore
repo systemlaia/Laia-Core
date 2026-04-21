@@ -1,39 +1,49 @@
-.env
-**/.DS_Store
-**/Thumbs.db
+# Secrets
+*.env
+*.token
+*.key
 
-# runtime data
-ollama/data/
-open-webui/data/
-portainer/data/
-postgres/data/
-redis/data/
-n8n/data/
-paperless/data/
-paperless/media/
-paperless/export/
-paperless/consume/
-filebrowser/database.db
-caddy/data/
-caddy/config/
+# Home Assistant
+*long_lived*
 
-# optional local archive content
-archive/nas/
-archive/ingest/
-archive/projects/
+# System
+.DS_Store
 
-# Runtime logs
-homepage/config/logs/
+# Logs
+logs/
 *.log
 
+# Obsidian (local workspace)
+.obsidian/
+
 # Backups
-backups/
+homepage/config-backup-*/
 
-# Local env
-.env
+# Archive (large / raw data)
+archive/
 
-# Docker data (if present locally)
-**/data/
+# Node / Python junk
+node_modules/
+__pycache__/
+*.pyc
 
-# macOS
-.DS_Store
+# Docker volumes / runtime data
+open-webui/
+
+# Temp / scratch
+*.tmp
+
+# Infrastructure runtime data
+caddy/
+filebrowser/
+n8n/
+ollama/
+portainer/
+postgres/
+redis/
+
+# Databases
+*.db
+
+# Local notes (optional)
+Mac mini.md

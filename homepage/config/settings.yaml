@@ -1,7 +1,36 @@
----
-# For configuration options and examples, please see:
-# https://gethomepage.dev/configs/settings/
+title: LAIA Dashboard
+description: Los Angeles Intelligent Architecture
+theme: dark
+color: slate
+headerStyle: boxed
+statusStyle: dot
+target: _self
+language: en
 
-providers:
-  openweathermap: openweathermapapikey
-  weatherapi: weatherapiapikey
+background:
+  blur: sm
+  saturate: 100
+  brightness: 40
+  opacity: 35
+
+quicklaunch:
+  searchDescriptions: true
+  hideInternetSearch: false
+  showSearchSuggestions: true
+
+layout:
+  Core:
+    style: row
+    columns: 3
+  Home:
+    style: row
+    columns: 3
+  Workshop:
+    style: row
+    columns: 3
+  Archive:
+    style: row
+    columns: 2
+  Network:
+    style: row
+    columns: 2
