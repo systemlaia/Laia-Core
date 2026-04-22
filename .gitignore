@@ -47,3 +47,7 @@ redis/
 
 # Local notes (optional)
 Mac mini.md
+# local backups
+backups/
+*.backup
+*.bak
