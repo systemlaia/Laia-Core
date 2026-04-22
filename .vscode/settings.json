@@ -1,0 +1,53 @@
+{
+  "workbench.colorTheme": "GitHub Dark Default",
+  "workbench.iconTheme": "material-icon-theme",
+
+  "editor.fontFamily": "FiraCode Nerd Font",
+  "editor.fontSize": 13,
+  "editor.fontLigatures": true,
+
+  "editor.minimap.enabled": false,
+  "editor.renderLineHighlight": "none",
+  "breadcrumbs.enabled": false,
+
+  "terminal.integrated.fontFamily": "FiraCode Nerd Font Mono",
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.cursorStyle": "block",
+  "terminal.integrated.cursorBlinking": true,
+  "terminal.integrated.lineHeight": 1.15,
+  "terminal.integrated.letterSpacing": 0.3,
+
+  "terminal.integrated.defaultLocation": "panel",
+  "terminal.integrated.tabs.enabled": true,
+  "terminal.integrated.tabs.location": "right",
+
+  "workbench.startupEditor": "none",
+  "workbench.statusBar.visible": true,
+  "workbench.statusBar.feedback.visible": false,
+
+  "files.autoSave": "afterDelay",
+
+  "workbench.colorCustomizations": {
+    "editor.background": "#07111A",
+    "sideBar.background": "#07111A",
+    "activityBar.background": "#07111A",
+    "panel.background": "#07111A",
+
+    "editorGroup.border": "#173244",
+    "panel.border": "#173244",
+    "sideBar.border": "#173244",
+
+    "terminal.background": "#07111A",
+    "terminal.foreground": "#D7E3EA",
+    "terminalCursor.foreground": "#8FE9FF",
+
+    "terminal.ansiBlack": "#0B1822",
+    "terminal.ansiRed": "#D16969",
+    "terminal.ansiGreen": "#7FD6A3",
+    "terminal.ansiYellow": "#D7B46A",
+    "terminal.ansiBlue": "#5FB0FF",
+    "terminal.ansiMagenta": "#A98BFF",
+    "terminal.ansiCyan": "#79E6F3",
+    "terminal.ansiWhite": "#D7E3EA"
+  }
+}
