@@ -2,81 +2,63 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "LAIA: Status",
-      "type": "shell",
-      "command": "source ~/.zshrc && cd /Users/paulroberson/Laia-Core && laia-status",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
-      "problemMatcher": []
+  "label": "LAIA: Status",
+  "type": "shell",
+  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml ps",
+  "problemMatcher": []
     },
     {
-      "label": "LAIA: Up",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
-      "problemMatcher": []
-    },
+  "label": "LAIA: Status",
+  "type": "shell",
+  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml ps",
+  "problemMatcher": []
+     },
     {
-      "label": "LAIA: Down",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml down",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
-      "problemMatcher": []
-    },
+  "label": "LAIA: Down",
+  "type": "shell",
+  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml down",
+  "problemMatcher": []
+},
     {
       "label": "LAIA: PS",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml ps",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
+      "command": "source ~/.zshrc && laia-ps",
       "problemMatcher": []
     },
     {
-      "label": "LAIA: Logs",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml logs -f --tail=100",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
-      "problemMatcher": []
-    },
+  "label": "LAIA: Logs",
+  "type": "shell",
+  "command": "source ~/.zshrc && laialogs",
+  "isBackground": true
+  },
     {
       "label": "LAIA: Git Status",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && git status -sb",
-      "options": {
-        "shell": {
-          "executable": "/bin/zsh",
-          "args": ["-l", "-c"]
-        }
-      },
+      "command": "git status -sb",
+      "problemMatcher": []
+    },
+    {
+      "label": "LAIA: Pull",
+      "type": "shell",
+      "command": "source ~/.zshrc && laiapull",
+      "problemMatcher": []
+    },
+    {
+      "label": "LAIA: Push",
+      "type": "shell",
+      "command": "source ~/.zshrc && laiapush",
       "problemMatcher": []
     },
     {
       "label": "LAIA: Open Homepage",
       "type": "shell",
-      "command": "open http://localhost:4000",
+      "command": "source ~/.zshrc && laia-home",
+      "problemMatcher": []
+    },
+    {
+      "label": "LAIA: Services Map",
+      "type": "shell",
+      "command": "source ~/.zshrc && laia-services",
       "problemMatcher": []
     }
   ]
