@@ -22,6 +22,6 @@ ORDER BY count DESC;
 SELECT film_mode, COUNT(*) AS count
 FROM files
 WHERE film_mode IS NOT NULL
+  AND extension = '.raf'
 GROUP BY film_mode
 ORDER BY count DESC;
-SQL
