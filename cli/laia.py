@@ -949,6 +949,43 @@ def doctor(_args=None):
 
     print("")
 
+def documents_status():
+    base = LAIA_ROOT / "archive" / "library" / "documents"
+
+    paths = {
+        "inbox": base / "inbox",
+        "inbox_action": base / "inbox" / "action",
+        "inbox_records": base / "inbox" / "records",
+        "inbox_junk": base / "inbox" / "junk",
+        "action": base / "action",
+        "records": base / "records",
+        "junk": base / "junk",
+    }
+
+    def count_pdfs(path: Path) -> int:
+        if not path.exists():
+            return 0
+        return sum(1 for f in path.iterdir() if f.is_file() and f.suffix.lower() == ".pdf")
+
+    inbox_total = (
+        count_pdfs(paths["inbox"]) +
+        count_pdfs(paths["inbox_action"]) +
+        count_pdfs(paths["inbox_records"]) +
+        count_pdfs(paths["inbox_junk"])
+    )
+
+    print("\n=== LAIA Documents Status ===\n")
+    print("Inbox:")
+    print(f"  Total:   {inbox_total}")
+    print(f"  Action:  {count_pdfs(paths['inbox_action'])}")
+    print(f"  Records: {count_pdfs(paths['inbox_records'])}")
+    print(f"  Junk:    {count_pdfs(paths['inbox_junk'])}")
+
+    print("\nArchive:")
+    print(f"  Action:  {count_pdfs(paths['action'])}")
+    print(f"  Records: {count_pdfs(paths['records'])}")
+    print(f"  Junk:    {count_pdfs(paths['junk'])}")
+    print("")
 
 def main():
     parser = argparse.ArgumentParser(prog="laia")
@@ -997,7 +1034,7 @@ def main():
     dict_meal.add_argument("text", nargs="+")
     dict_meal.set_defaults(func=dictation_meal)
 
-    
+
     dev_p = sub.add_parser("dev")
     dev_sub = dev_p.add_subparsers(dest="subcommand")
 
@@ -1022,6 +1059,12 @@ def main():
     dev_process_file_p.add_argument("request_file")
     dev_process_file_p.add_argument("--model", default="mistral")
     dev_process_file_p.set_defaults(func=dev_process_file)
+
+    documents_p = sub.add_parser("documents")
+    documents_sub = documents_p.add_subparsers(dest="subcommand")
+
+    documents_status_p = documents_sub.add_parser("status")
+    documents_status_p.set_defaults(func=lambda args: documents_status())
 
 
     args = parser.parse_args()
@@ -1054,7 +1097,7 @@ def main():
         dictation_task(args)
     elif args.command == "dictation" and args.subcommand == "meal":
         dictation_meal(args)
-    
+
     elif args.command == "dev" and args.subcommand == "request":
         dev_request(args)
     elif args.command == "dev" and args.subcommand == "inbox":
@@ -1065,10 +1108,11 @@ def main():
         dev_process_latest(args)
     elif args.command == "dev" and args.subcommand == "process":
         dev_process_file(args)
+    elif args.command == "documents" and args.subcommand == "status":
+        documents_status()
 
     else:
         parser.print_help()
-
 
 if __name__ == "__main__":
     main()
