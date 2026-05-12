@@ -5,7 +5,6 @@
   "editor.fontFamily": "FiraCode Nerd Font",
   "editor.fontSize": 13,
   "editor.fontLigatures": true,
-
   "editor.minimap.enabled": false,
   "editor.renderLineHighlight": "none",
   "breadcrumbs.enabled": false,
@@ -20,19 +19,24 @@
   "terminal.integrated.defaultLocation": "panel",
   "terminal.integrated.tabs.enabled": true,
   "terminal.integrated.tabs.location": "right",
+  "terminal.integrated.persistentSessionReviveProcess": "onExitAndWindowClose",
 
   "workbench.startupEditor": "none",
   "workbench.statusBar.visible": true,
   "workbench.statusBar.feedback.visible": false,
+  "workbench.activityBar.location": "default",
+  "workbench.sideBar.location": "left",
+  "workbench.panel.defaultLocation": "bottom",
 
   "files.autoSave": "afterDelay",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
 
   "workbench.colorCustomizations": {
     "editor.background": "#07111A",
     "sideBar.background": "#07111A",
     "activityBar.background": "#07111A",
     "panel.background": "#07111A",
-
     "editorGroup.border": "#173244",
     "panel.border": "#173244",
     "sideBar.border": "#173244",

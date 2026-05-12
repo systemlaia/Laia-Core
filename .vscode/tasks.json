@@ -2,63 +2,134 @@
   "version": "2.0.0",
   "tasks": [
     {
-  "label": "LAIA: Status",
-  "type": "shell",
-  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml ps",
-  "problemMatcher": []
-    },
-    {
-  "label": "LAIA: Status",
-  "type": "shell",
-  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml ps",
-  "problemMatcher": []
-     },
-    {
-  "label": "LAIA: Down",
-  "type": "shell",
-  "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml down",
-  "problemMatcher": []
-},
-    {
-      "label": "LAIA: PS",
+      "label": "CORE: Status",
       "type": "shell",
-      "command": "source ~/.zshrc && laia-ps",
+      "command": "cd /Users/paulroberson/Laia-Core && echo '== GIT ==' && git status -sb && echo '\\n== DOCKER ==' && docker compose -f docker-compose.ops.yml ps && echo '\\n== OLLAMA ==' && curl -s http://localhost:11434/api/tags",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
     },
     {
-  "label": "LAIA: Logs",
-  "type": "shell",
-  "command": "source ~/.zshrc && laialogs",
-  "isBackground": true
-  },
-    {
-      "label": "LAIA: Git Status",
+      "label": "CORE: Up",
       "type": "shell",
-      "command": "git status -sb",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
     },
     {
-      "label": "LAIA: Pull",
+      "label": "CORE: Down",
       "type": "shell",
-      "command": "source ~/.zshrc && laiapull",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml down",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
     },
     {
-      "label": "LAIA: Push",
+      "label": "CORE: Logs",
       "type": "shell",
-      "command": "source ~/.zshrc && laiapush",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml logs -f --tail=100",
+      "group": "build",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
       "problemMatcher": []
     },
     {
-      "label": "LAIA: Open Homepage",
+      "label": "CORE: Services Map",
       "type": "shell",
-      "command": "source ~/.zshrc && laia-home",
+      "command": "cd /Users/paulroberson/Laia-Core && sed -n '1,240p' notes/live-service-map.md",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "NAS: Check Mounts",
+      "type": "shell",
+      "command": "echo '== NAS MOUNTS ==' && mount | grep -iE 'qnap|smb|afp|Public|LAIA|Volumes' || true && echo '\\n== /Volumes ==' && ls -la /Volumes",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
     },
     {
-      "label": "LAIA: Services Map",
+      "label": "NAS: Check Public Media",
       "type": "shell",
-      "command": "source ~/.zshrc && laia-services",
+      "command": "echo '== NAS PUBLIC CHECK ==' && ls -la /Volumes/Public 2>/dev/null && echo '\\n== MEDIA ==' && du -sh /Volumes/Public/Media 2>/dev/null || echo 'NAS Public/Media not mounted'",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARCHIVE: Check Local Archive",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Laia-Core && echo '== LOCAL ARCHIVE ==' && ls -la archive && echo '\\n== SIZE ==' && du -sh archive 2>/dev/null",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "OLLAMA: List Models",
+      "type": "shell",
+      "command": "docker exec -it laia-ollama ollama list",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "OLLAMA: API Tags",
+      "type": "shell",
+      "command": "curl -s http://localhost:11434/api/tags",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "SERVICES: Open Homepage",
+      "type": "shell",
+      "command": "open http://localhost:4001",
+      "presentation": { "reveal": "never", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "SERVICES: Open WebUI",
+      "type": "shell",
+      "command": "open http://localhost:3000",
+      "presentation": { "reveal": "never", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "SERVICES: Open Filebrowser",
+      "type": "shell",
+      "command": "open http://localhost:8081",
+      "presentation": { "reveal": "never", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "SERVICES: Open Portainer",
+      "type": "shell",
+      "command": "open https://localhost:9443",
+      "presentation": { "reveal": "never", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "GIT: Status",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Laia-Core && git status -sb",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "GIT: Pull",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Laia-Core && git pull --rebase origin main",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "GIT: Push",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Laia-Core && git push origin main",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
     }
   ]
