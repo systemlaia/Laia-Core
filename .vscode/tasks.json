@@ -2,83 +2,87 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "CORE: Status",
+      "label": "FIELD: Status",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && echo '== GIT ==' && git status -sb && echo '\\n== DOCKER ==' && docker compose -f docker-compose.ops.yml ps && echo '\\n== OLLAMA ==' && curl -s http://localhost:11434/api/tags",
+      "command": "echo '== FIELD NODE ==' && docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' && echo '\\n== DISK ==' && docker system df && echo '\\n== NAS ==' && ls -ld /Volumes/Public 2>/dev/null || echo 'NAS: OFFLINE'",
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
     },
     {
-      "label": "CORE: Up",
+      "label": "FIELD: Up",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d homepage filebrowser portainer",
       "group": "build",
       "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
     },
     {
-      "label": "CORE: Down",
+      "label": "FIELD: Down",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml down",
+      "command": "docker stop laia-homepage laia-filebrowser laia-portainer",
       "group": "build",
       "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
     },
     {
-      "label": "CORE: Logs",
+  "label": "AI LOCAL: Up",
+  "type": "shell",
+  "command": "docker start laia-ollama laia-open-webui",
+  "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+  "problemMatcher": []
+},
+{
+  "label": "AI LOCAL: Down",
+  "type": "shell",
+  "command": "docker stop laia-ollama laia-open-webui",
+  "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+  "problemMatcher": []
+  },
+    {
+      "label": "AUTOMATION: Up",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml logs -f --tail=100",
-      "group": "build",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d n8n postgres redis",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "AUTOMATION: Down",
+      "type": "shell",
+      "command": "docker stop laia-n8n laia-postgres laia-redis",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "FIELD: Logs",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml logs -f --tail=100 homepage filebrowser portainer",
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
       "problemMatcher": []
     },
+{
+  "label": "AI LOCAL: Logs",
+  "type": "shell",
+  "command": "docker logs -f --tail=100 laia-ollama & docker logs -f --tail=100 laia-open-webui",
+  "isBackground": true,
+  "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+  "problemMatcher": []
+},
     {
-      "label": "CORE: Services Map",
+      "label": "NAS: Check Mount",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && sed -n '1,240p' notes/live-service-map.md",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
-      "problemMatcher": []
-    },
-
-    {
-      "label": "NAS: Check Mounts",
-      "type": "shell",
-      "command": "echo '== NAS MOUNTS ==' && mount | grep -iE 'qnap|smb|afp|Public|LAIA|Volumes' || true && echo '\\n== /Volumes ==' && ls -la /Volumes",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
-      "problemMatcher": []
-    },
-    {
-      "label": "NAS: Check Public Media",
-      "type": "shell",
-      "command": "echo '== NAS PUBLIC CHECK ==' && ls -la /Volumes/Public 2>/dev/null && echo '\\n== MEDIA ==' && du -sh /Volumes/Public/Media 2>/dev/null || echo 'NAS Public/Media not mounted'",
+      "command": "echo '== NAS ==' && mount | grep -iE 'smb|Public|192.168.1.144' || true && echo '\\n== /Volumes/Public ==' && ls -la /Volumes/Public 2>/dev/null || echo 'NAS Public not mounted'",
       "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
     },
     {
-      "label": "ARCHIVE: Check Local Archive",
+      "label": "NAS: Open Public",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && echo '== LOCAL ARCHIVE ==' && ls -la archive && echo '\\n== SIZE ==' && du -sh archive 2>/dev/null",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "command": "open /Volumes/Public",
+      "presentation": { "reveal": "never", "panel": "shared" },
       "problemMatcher": []
     },
-
-    {
-      "label": "OLLAMA: List Models",
-      "type": "shell",
-      "command": "docker exec -it laia-ollama ollama list",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
-      "problemMatcher": []
-    },
-    {
-      "label": "OLLAMA: API Tags",
-      "type": "shell",
-      "command": "curl -s http://localhost:11434/api/tags",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
-      "problemMatcher": []
-    },
-
     {
       "label": "SERVICES: Open Homepage",
       "type": "shell",
@@ -107,7 +111,6 @@
       "presentation": { "reveal": "never", "panel": "shared" },
       "problemMatcher": []
     },
-
     {
       "label": "GIT: Status",
       "type": "shell",
@@ -125,12 +128,55 @@
       "problemMatcher": []
     },
     {
+  "label": "OLLAMA: Pull Standard Models",
+  "type": "shell",
+  "command": "docker exec -it laia-ollama ollama pull llama3 && docker exec -it laia-ollama ollama pull mistral && docker exec -it laia-ollama ollama pull qwen2.5:7b && docker exec -it laia-ollama ollama pull phi4-mini && docker exec -it laia-ollama ollama pull llava",
+  "presentation": {
+    "reveal": "always",
+    "panel": "dedicated",
+    "clear": false
+  },
+  "problemMatcher": []
+},
+    {
       "label": "GIT: Push",
       "type": "shell",
       "command": "cd /Users/paulroberson/Laia-Core && git push origin main",
       "group": "test",
       "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
-    }
+    },
+    {
+  "label": "CORE REMOTE: SSH Mini",
+  "type": "shell",
+  "command": "ssh iv@Pauls-Mac-mini.local",
+  "presentation": {
+    "reveal": "always",
+    "panel": "dedicated",
+    "clear": true
+  },
+  "problemMatcher": []
+},
+{
+  "label": "CORE REMOTE: Check Mini",
+  "type": "shell",
+  "command": "ssh iv@Pauls-Mac-mini.local 'hostname; uptime; docker ps --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"'",
+  "presentation": {
+    "reveal": "always",
+    "panel": "shared",
+    "clear": true
+  },
+  "problemMatcher": []
+},
+{
+  "label": "CORE REMOTE: Open Mini Homepage",
+  "type": "shell",
+  "command": "open http://Pauls-Mac-mini.local:4001",
+  "presentation": {
+    "reveal": "never",
+    "panel": "shared"
+  },
+  "problemMatcher": []
+}
   ]
 }
