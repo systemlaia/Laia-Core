@@ -4,7 +4,7 @@
     {
       "label": "FIELD: Status",
       "type": "shell",
-      "command": "echo '== FIELD NODE ==' && docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' && echo '\\n== DISK ==' && docker system df && echo '\\n== NAS ==' && ls -ld /Volumes/Public 2>/dev/null || echo 'NAS: OFFLINE'",
+      "command": "echo '== FIELD NODE ==' && docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' && echo '\\n== DOCKER DISK ==' && docker system df && echo '\\n== NAS ==' && ls -ld /Volumes/Public 2>/dev/null || echo 'NAS: OFFLINE'",
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
@@ -26,49 +26,42 @@
       "problemMatcher": []
     },
     {
-  "label": "AI LOCAL: Up",
-  "type": "shell",
-  "command": "docker start laia-ollama laia-open-webui",
-  "presentation": { "reveal": "always", "panel": "shared", "clear": false },
-  "problemMatcher": []
-},
-{
-  "label": "AI LOCAL: Down",
-  "type": "shell",
-  "command": "docker stop laia-ollama laia-open-webui",
-  "presentation": { "reveal": "always", "panel": "shared", "clear": false },
-  "problemMatcher": []
-  },
-    {
-      "label": "AUTOMATION: Up",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d n8n postgres redis",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
-      "problemMatcher": []
-    },
-    {
-      "label": "AUTOMATION: Down",
-      "type": "shell",
-      "command": "docker stop laia-n8n laia-postgres laia-redis",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
-      "problemMatcher": []
-    },
-    {
       "label": "FIELD: Logs",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml logs -f --tail=100 homepage filebrowser portainer",
+      "command": "docker logs -f --tail=100 laia-homepage & docker logs -f --tail=100 laia-filebrowser & docker logs -f --tail=100 laia-portainer",
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
       "problemMatcher": []
     },
-{
-  "label": "AI LOCAL: Logs",
-  "type": "shell",
-  "command": "docker logs -f --tail=100 laia-ollama & docker logs -f --tail=100 laia-open-webui",
-  "isBackground": true,
-  "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
-  "problemMatcher": []
-},
+    {
+      "label": "AI LOCAL: Up",
+      "type": "shell",
+      "command": "docker start laia-ollama laia-open-webui",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "AI LOCAL: Down",
+      "type": "shell",
+      "command": "docker stop laia-ollama laia-open-webui",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "AI LOCAL: Logs",
+      "type": "shell",
+      "command": "docker logs -f --tail=100 laia-ollama & docker logs -f --tail=100 laia-open-webui",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "OLLAMA: Pull Standard Models",
+      "type": "shell",
+      "command": "docker exec -it laia-ollama ollama pull llama3 && docker exec -it laia-ollama ollama pull mistral && docker exec -it laia-ollama ollama pull qwen2.5:7b && docker exec -it laia-ollama ollama pull phi4-mini && docker exec -it laia-ollama ollama pull llava",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "problemMatcher": []
+    },
     {
       "label": "NAS: Check Mount",
       "type": "shell",
@@ -80,6 +73,27 @@
       "label": "NAS: Open Public",
       "type": "shell",
       "command": "open /Volumes/Public",
+      "presentation": { "reveal": "never", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CORE REMOTE: SSH Mini",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "CORE REMOTE: Check Mini",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local 'hostname; uptime; docker ps --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"'",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "CORE REMOTE: Open Mini Homepage",
+      "type": "shell",
+      "command": "open http://Pauls-Mac-mini.local:4001",
       "presentation": { "reveal": "never", "panel": "shared" },
       "problemMatcher": []
     },
@@ -128,55 +142,12 @@
       "problemMatcher": []
     },
     {
-  "label": "OLLAMA: Pull Standard Models",
-  "type": "shell",
-  "command": "docker exec -it laia-ollama ollama pull llama3 && docker exec -it laia-ollama ollama pull mistral && docker exec -it laia-ollama ollama pull qwen2.5:7b && docker exec -it laia-ollama ollama pull phi4-mini && docker exec -it laia-ollama ollama pull llava",
-  "presentation": {
-    "reveal": "always",
-    "panel": "dedicated",
-    "clear": false
-  },
-  "problemMatcher": []
-},
-    {
       "label": "GIT: Push",
       "type": "shell",
       "command": "cd /Users/paulroberson/Laia-Core && git push origin main",
       "group": "test",
       "presentation": { "reveal": "always", "panel": "shared", "clear": false },
       "problemMatcher": []
-    },
-    {
-  "label": "CORE REMOTE: SSH Mini",
-  "type": "shell",
-  "command": "ssh iv@Pauls-Mac-mini.local",
-  "presentation": {
-    "reveal": "always",
-    "panel": "dedicated",
-    "clear": true
-  },
-  "problemMatcher": []
-},
-{
-  "label": "CORE REMOTE: Check Mini",
-  "type": "shell",
-  "command": "ssh iv@Pauls-Mac-mini.local 'hostname; uptime; docker ps --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"'",
-  "presentation": {
-    "reveal": "always",
-    "panel": "shared",
-    "clear": true
-  },
-  "problemMatcher": []
-},
-{
-  "label": "CORE REMOTE: Open Mini Homepage",
-  "type": "shell",
-  "command": "open http://Pauls-Mac-mini.local:4001",
-  "presentation": {
-    "reveal": "never",
-    "panel": "shared"
-  },
-  "problemMatcher": []
-}
+    }
   ]
 }
