@@ -949,7 +949,88 @@ def doctor(_args=None):
 
     print("")
 
-def documents_status():
+
+
+# ---------------------------------------------------------------------
+# LAIA Documents / Obsidian Vault Mirror
+# ---------------------------------------------------------------------
+
+BLUE_BOOK_VAULT = Path.home() / "LAIA" / "vaults" / "Blue Book"
+
+
+def run_cmd(cmd, cwd=None, check=True):
+    result = subprocess.run(
+        cmd,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    if result.stdout:
+        print(result.stdout.strip())
+
+    if result.stderr:
+        print(result.stderr.strip())
+
+    if check and result.returncode != 0:
+        raise SystemExit(result.returncode)
+
+    return result
+
+
+def documents_status(args):
+    vault = BLUE_BOOK_VAULT
+
+    if not vault.exists():
+        print(f"Vault mirror not found: {vault}")
+        raise SystemExit(1)
+
+    print("==> LAIA Documents")
+    print(f"Vault: {vault}")
+    print()
+
+    print("==> Git status")
+    run_cmd(["git", "status", "--short"], cwd=vault, check=False)
+
+    print()
+    print("==> Branch")
+    run_cmd(["git", "branch", "--show-current"], cwd=vault, check=False)
+
+    print()
+    print("==> Latest commit")
+    run_cmd(["git", "log", "-1", "--oneline"], cwd=vault, check=False)
+
+
+def documents_pull(args):
+    vault = BLUE_BOOK_VAULT
+
+    if not vault.exists():
+        print(f"Vault mirror not found: {vault}")
+        raise SystemExit(1)
+
+    print("==> Pulling Blue Book vault mirror")
+    run_cmd(["git", "pull", "--ff-only"], cwd=vault)
+
+    print()
+    print("==> Current status")
+    run_cmd(["git", "status", "--short"], cwd=vault, check=False)
+
+
+def documents_log(args):
+    vault = BLUE_BOOK_VAULT
+
+    if not vault.exists():
+        print(f"Vault mirror not found: {vault}")
+        raise SystemExit(1)
+
+    count = str(getattr(args, "count", 8))
+
+    print("==> Recent Blue Book commits")
+    run_cmd(["git", "log", f"-{count}", "--oneline", "--decorate"], cwd=vault, check=False)
+
+
+def documents_archive_status(_args=None):
     base = LAIA_ROOT / "archive" / "library" / "documents"
 
     paths = {
@@ -965,7 +1046,10 @@ def documents_status():
     def count_pdfs(path: Path) -> int:
         if not path.exists():
             return 0
-        return sum(1 for f in path.iterdir() if f.is_file() and f.suffix.lower() == ".pdf")
+        return sum(
+            1 for f in path.iterdir()
+            if f.is_file() and f.suffix.lower() == ".pdf"
+        )
 
     inbox_total = (
         count_pdfs(paths["inbox"]) +
@@ -974,7 +1058,7 @@ def documents_status():
         count_pdfs(paths["inbox_junk"])
     )
 
-    print("\n=== LAIA Documents Status ===\n")
+    print("\n=== LAIA Documents Archive Status ===\n")
     print("Inbox:")
     print(f"  Total:   {inbox_total}")
     print(f"  Action:  {count_pdfs(paths['inbox_action'])}")
@@ -986,6 +1070,60 @@ def documents_status():
     print(f"  Records: {count_pdfs(paths['records'])}")
     print(f"  Junk:    {count_pdfs(paths['junk'])}")
     print("")
+
+
+def add_documents_parser(subparsers):
+    documents = subparsers.add_parser(
+        "documents",
+        help="Manage LAIA Obsidian vault mirrors",
+    )
+
+    document_subcommands = documents.add_subparsers(
+        dest="documents_command",
+        required=True,
+    )
+
+    status = document_subcommands.add_parser(
+        "status",
+        help="Show Blue Book vault mirror status",
+    )
+    status.set_defaults(func=documents_status)
+
+    pull = document_subcommands.add_parser(
+        "pull",
+        help="Pull latest Blue Book changes into the Core mirror",
+    )
+    pull.set_defaults(func=documents_pull)
+
+    log = document_subcommands.add_parser(
+        "log",
+        help="Show recent Blue Book commits",
+    )
+    log.add_argument(
+        "-n",
+        "--count",
+        type=int,
+        default=8,
+        help="Number of commits to show",
+    )
+    log.set_defaults(func=documents_log)
+
+    archive = subparsers.add_parser(
+        "documents-archive",
+        help="Show legacy PDF/archive document status",
+    )
+
+    archive_subcommands = archive.add_subparsers(
+        dest="documents_archive_command",
+        required=True,
+    )
+
+    archive_status = archive_subcommands.add_parser(
+        "status",
+        help="Show PDF/archive document counts",
+    )
+    archive_status.set_defaults(func=documents_archive_status)
+
 
 def main():
     parser = argparse.ArgumentParser(prog="laia")
@@ -1034,7 +1172,7 @@ def main():
     dict_meal.add_argument("text", nargs="+")
     dict_meal.set_defaults(func=dictation_meal)
 
-
+    
     dev_p = sub.add_parser("dev")
     dev_sub = dev_p.add_subparsers(dest="subcommand")
 
@@ -1060,11 +1198,7 @@ def main():
     dev_process_file_p.add_argument("--model", default="mistral")
     dev_process_file_p.set_defaults(func=dev_process_file)
 
-    documents_p = sub.add_parser("documents")
-    documents_sub = documents_p.add_subparsers(dest="subcommand")
-
-    documents_status_p = documents_sub.add_parser("status")
-    documents_status_p.set_defaults(func=lambda args: documents_status())
+    add_documents_parser(sub)
 
 
     args = parser.parse_args()
@@ -1097,7 +1231,7 @@ def main():
         dictation_task(args)
     elif args.command == "dictation" and args.subcommand == "meal":
         dictation_meal(args)
-
+    
     elif args.command == "dev" and args.subcommand == "request":
         dev_request(args)
     elif args.command == "dev" and args.subcommand == "inbox":
@@ -1108,11 +1242,12 @@ def main():
         dev_process_latest(args)
     elif args.command == "dev" and args.subcommand == "process":
         dev_process_file(args)
-    elif args.command == "documents" and args.subcommand == "status":
-        documents_status()
 
+    elif hasattr(args, "func"):
+        args.func(args)
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
