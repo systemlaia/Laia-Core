@@ -1,0 +1,143 @@
+{
+  "source_manifest": "/Users/iv/Projects/Laia-Core/archive/manifests/manifest_20260509-091359.csv",
+  "generated": "20260509-130045",
+  "total_files": 15972,
+  "total_bytes": 102554718465,
+  "total_size_human": "95.51 GB",
+  "extensions": {
+    ".dng": {
+      "count": 45,
+      "bytes": 653244178,
+      "size_human": "622.98 MB"
+    },
+    ".jpg": {
+      "count": 12865,
+      "bytes": 51939344946,
+      "size_human": "48.37 GB"
+    },
+    ".png": {
+      "count": 14,
+      "bytes": 3280514,
+      "size_human": "3.13 MB"
+    },
+    ".raf": {
+      "count": 2557,
+      "bytes": 49356221304,
+      "size_human": "45.97 GB"
+    },
+    ".tif": {
+      "count": 38,
+      "bytes": 383167992,
+      "size_human": "365.42 MB"
+    },
+    ".xmp": {
+      "count": 453,
+      "bytes": 219459531,
+      "size_human": "209.29 MB"
+    }
+  },
+  "top_level_directories": {
+    "Photos": 15546,
+    "Business": 170,
+    "Selling": 137,
+    "Messages": 64,
+    "Books": 43,
+    "Street": 4,
+    "Buildings": 4,
+    "Landscape": 2,
+    "Garage": 1,
+    "Instagram": 1
+  },
+  "sample_files": [
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Street/DSCF2795.jpg",
+      "relative_path": "Street/DSCF2795.jpg",
+      "filename": "DSCF2795.jpg",
+      "extension": ".jpg",
+      "size_bytes": 5773792,
+      "modified_time": "2025-12-21T02:19:15.921031",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Street/DSCF2722.jpg",
+      "relative_path": "Street/DSCF2722.jpg",
+      "filename": "DSCF2722.jpg",
+      "extension": ".jpg",
+      "size_bytes": 5222584,
+      "modified_time": "2025-12-21T02:21:01.633827",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Street/DSCF2699.jpg",
+      "relative_path": "Street/DSCF2699.jpg",
+      "filename": "DSCF2699.jpg",
+      "extension": ".jpg",
+      "size_bytes": 4544783,
+      "modified_time": "2025-12-21T02:21:14.494543",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Street/DSCF2496.jpg",
+      "relative_path": "Street/DSCF2496.jpg",
+      "filename": "DSCF2496.jpg",
+      "extension": ".jpg",
+      "size_bytes": 5909350,
+      "modified_time": "2025-12-21T02:22:33.082306",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Garage/DSCF2763.jpg",
+      "relative_path": "Garage/DSCF2763.jpg",
+      "filename": "DSCF2763.jpg",
+      "extension": ".jpg",
+      "size_bytes": 3899514,
+      "modified_time": "2025-12-21T02:19:44.215616",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Landscape/DSCF2481.jpg",
+      "relative_path": "Landscape/DSCF2481.jpg",
+      "filename": "DSCF2481.jpg",
+      "extension": ".jpg",
+      "size_bytes": 5196483,
+      "modified_time": "2025-12-21T02:25:35.429684",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Landscape/DSCF2483.jpg",
+      "relative_path": "Landscape/DSCF2483.jpg",
+      "filename": "DSCF2483.jpg",
+      "extension": ".jpg",
+      "size_bytes": 5193520,
+      "modified_time": "2025-12-21T02:29:02.875106",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Photos/Color test.jpg",
+      "relative_path": "Photos/Color test.jpg",
+      "filename": "Color test.jpg",
+      "extension": ".jpg",
+      "size_bytes": 0,
+      "modified_time": "2026-01-02T13:27:26.452016",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Instagram/DSCF4212.jpg",
+      "relative_path": "Instagram/DSCF4212.jpg",
+      "filename": "DSCF4212.jpg",
+      "extension": ".jpg",
+      "size_bytes": 2460012,
+      "modified_time": "2026-01-03T04:13:22.595810",
+      "sha256": ""
+    },
+    {
+      "path": "/Users/iv/NAS/Public/Media/Photos/Selling/Dr-3010c/DSCF9333.jpg",
+      "relative_path": "Selling/Dr-3010c/DSCF9333.jpg",
+      "filename": "DSCF9333.jpg",
+      "extension": ".jpg",
+      "size_bytes": 1482438,
+      "modified_time": "2025-05-27T14:14:26.331914",
+      "sha256": ""
+    }
+  ]
+}
