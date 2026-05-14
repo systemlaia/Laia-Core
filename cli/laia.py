@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import sys
 import subprocess
@@ -1072,6 +1073,316 @@ def documents_archive_status(_args=None):
     print("")
 
 
+
+def markdown_title(path: Path, body: str, fm: dict) -> str:
+    if fm.get("title"):
+        return str(fm["title"]).strip()
+
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+
+    return path.stem
+
+
+def markdown_excerpt(body: str, limit: int = 500) -> str:
+    lines = []
+    in_code = False
+
+    for line in body.splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+
+        if in_code:
+            continue
+
+        if not stripped:
+            continue
+
+        if stripped.startswith("![[") or stripped.startswith("!["):
+            continue
+
+        lines.append(stripped)
+
+    text = " ".join(lines)
+    if len(text) <= limit:
+        return text
+
+    return text[:limit].rsplit(" ", 1)[0] + "..."
+
+
+def documents_index(args):
+    vault = BLUE_BOOK_VAULT
+
+    if not vault.exists():
+        print(f"Vault mirror not found: {vault}")
+        raise SystemExit(1)
+
+    output_dir = Path.home() / "LAIA" / "indexes"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = output_dir / "blue-book-index.json"
+
+    include_body = getattr(args, "include_body", False)
+
+    records = []
+
+    for note in sorted(vault.rglob("*.md")):
+        if ".obsidian" in note.parts:
+            continue
+        if ".git" in note.parts:
+            continue
+
+        try:
+            fm, body = load_frontmatter(note)
+        except Exception as e:
+            fm, body = {}, ""
+            print(f"WARN: Could not read {note}: {e}")
+
+        rel = str(note.relative_to(vault))
+        stat = note.stat()
+
+        record = {
+            "path": rel,
+            "absolute_path": str(note),
+            "title": markdown_title(note, body, fm),
+            "type": fm.get("type", "note") if isinstance(fm, dict) else "note",
+            "tags": fm.get("tags", []) if isinstance(fm, dict) else [],
+            "created_at": fm.get("created_at") if isinstance(fm, dict) else None,
+            "updated_at": fm.get("updated_at") if isinstance(fm, dict) else None,
+            "modified_timestamp": stat.st_mtime,
+            "size_bytes": stat.st_size,
+            "excerpt": markdown_excerpt(body),
+        }
+
+        if include_body:
+            record["body"] = body
+
+        records.append(record)
+
+    index = {
+        "index_type": "laia_blue_book_markdown_index",
+        "vault": str(vault),
+        "generated_at": datetime.now().isoformat(),
+        "note_count": len(records),
+        "include_body": include_body,
+        "records": records,
+    }
+
+    output_path.write_text(
+        json.dumps(index, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    print("==> LAIA Documents Index")
+    print(f"Vault: {vault}")
+    print(f"Notes indexed: {len(records)}")
+    print(f"Index written: {output_path}")
+
+    if records:
+        print()
+        print("==> Sample records")
+        for record in records[:5]:
+            print(f"- {record['title']} — {record['path']}")
+
+
+def documents_search(args):
+    index_path = Path.home() / "LAIA" / "indexes" / "blue-book-index.json"
+
+    if not index_path.exists():
+        print("Index not found. Run: laia documents index")
+        raise SystemExit(1)
+
+    query = " ".join(args.query).lower()
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+
+    matches = []
+
+    for record in data.get("records", []):
+        haystack = " ".join([
+            str(record.get("title", "")),
+            str(record.get("path", "")),
+            str(record.get("type", "")),
+            " ".join(record.get("tags", []) if isinstance(record.get("tags"), list) else []),
+            str(record.get("excerpt", "")),
+            str(record.get("body", "")),
+        ]).lower()
+
+        if query in haystack:
+            matches.append(record)
+
+    print(f"==> Search: {query}")
+    print(f"Matches: {len(matches)}")
+    print()
+
+    for record in matches[:20]:
+        print(f"- {record.get('title', 'Untitled')}")
+        print(f"  Path: {record.get('path')}")
+        excerpt = record.get("excerpt")
+        if excerpt:
+            print(f"  {excerpt[:220]}")
+        print("")
+
+
+
+def score_document_record(record: dict, query_terms: list[str]) -> int:
+    haystack = " ".join([
+        str(record.get("title", "")),
+        str(record.get("path", "")),
+        str(record.get("type", "")),
+        " ".join(record.get("tags", []) if isinstance(record.get("tags"), list) else []),
+        str(record.get("excerpt", "")),
+        str(record.get("body", "")),
+    ]).lower()
+
+    score = 0
+
+    for term in query_terms:
+        if not term:
+            continue
+
+        title = str(record.get("title", "")).lower()
+        path = str(record.get("path", "")).lower()
+        excerpt = str(record.get("excerpt", "")).lower()
+        body = str(record.get("body", "")).lower()
+
+        if term in title:
+            score += 10
+        if term in path:
+            score += 6
+        if term in excerpt:
+            score += 4
+        if term in body:
+            score += 2
+        if term in haystack:
+            score += 1
+
+    return score
+
+
+def load_documents_index(include_body_if_missing: bool = False):
+    index_path = Path.home() / "LAIA" / "indexes" / "blue-book-index.json"
+
+    if not index_path.exists():
+        print("Index not found. Building one now...")
+        class Args:
+            include_body = include_body_if_missing
+        documents_index(Args())
+
+    return json.loads(index_path.read_text(encoding="utf-8"))
+
+
+def documents_ask(args):
+    question = " ".join(args.question).strip()
+    model = getattr(args, "model", "mistral")
+    limit = getattr(args, "limit", 8)
+
+    if not question:
+        print("Ask needs a question.")
+        raise SystemExit(1)
+
+    data = load_documents_index(include_body_if_missing=False)
+    records = data.get("records", [])
+
+    query_terms = [
+        term.strip().lower()
+        for term in question.replace("?", " ").replace(",", " ").split()
+        if len(term.strip()) > 2
+    ]
+
+    scored = []
+    for record in records:
+        score = score_document_record(record, query_terms)
+        if score > 0:
+            scored.append((score, record))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    # Keep weak accidental matches out of model context.
+    min_score = getattr(args, "min_score", 6)
+    selected = [record for score, record in scored if score >= min_score][:limit]
+
+    if not selected:
+        print("No matching Blue Book notes found in the index.")
+        print("Try: laia documents index --include-body")
+        raise SystemExit(1)
+
+    context_blocks = []
+    for idx, record in enumerate(selected, start=1):
+        title = record.get("title", "Untitled")
+        rel_path = record.get("path", "")
+        excerpt = record.get("excerpt", "")
+
+        context_blocks.append(
+            f"[{idx}] {title}\n"
+            f"Path: {rel_path}\n"
+            f"Excerpt:\n{excerpt}\n"
+        )
+
+    context = "\n---\n".join(context_blocks)
+
+    prompt = f"""You are LAIA's local document assistant.
+
+Use only the Blue Book Obsidian vault context below. If the answer is not supported by the context, say that the current index does not contain enough information.
+
+Question:
+{question}
+
+Blue Book context:
+{context}
+
+Answer in a practical way for Paul. Include the note paths you relied on.
+"""
+
+    print(f"==> Asking {model} using {len(selected)} Blue Book notes")
+    print()
+
+    response = ollama_generate(model, prompt)
+    print(response)
+    print()
+
+    print("==> Sources")
+    for record in selected:
+        print(f"- {record.get('title', 'Untitled')} — {record.get('path', '')}")
+
+
+def documents_context(args):
+    question = " ".join(args.question).strip()
+    limit = getattr(args, "limit", 8)
+
+    data = load_documents_index(include_body_if_missing=False)
+    records = data.get("records", [])
+
+    query_terms = [
+        term.strip().lower()
+        for term in question.replace("?", " ").replace(",", " ").split()
+        if len(term.strip()) > 2
+    ]
+
+    scored = []
+    for record in records:
+        score = score_document_record(record, query_terms)
+        if score > 0:
+            scored.append((score, record))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+
+    print(f"==> Context candidates for: {question}")
+    print()
+
+    for score, record in scored[:limit]:
+        print(f"- Score {score}: {record.get('title', 'Untitled')}")
+        print(f"  Path: {record.get('path', '')}")
+        excerpt = record.get("excerpt")
+        if excerpt:
+            print(f"  {excerpt[:260]}")
+        print("")
+
+
 def add_documents_parser(subparsers):
     documents = subparsers.add_parser(
         "documents",
@@ -1107,6 +1418,61 @@ def add_documents_parser(subparsers):
         help="Number of commits to show",
     )
     log.set_defaults(func=documents_log)
+
+    index = document_subcommands.add_parser(
+        "index",
+        help="Build a JSON index of the Blue Book Markdown vault",
+    )
+    index.add_argument(
+        "--include-body",
+        action="store_true",
+        help="Store full note bodies in the JSON index",
+    )
+    index.set_defaults(func=documents_index)
+
+    search = document_subcommands.add_parser(
+        "search",
+        help="Search the generated Blue Book Markdown index",
+    )
+    search.add_argument("query", nargs="+")
+    search.set_defaults(func=documents_search)
+
+    ask = document_subcommands.add_parser(
+        "ask",
+        help="Ask a local Ollama model a question using the Blue Book index",
+    )
+    ask.add_argument("question", nargs="+")
+    ask.add_argument(
+        "--model",
+        default="mistral",
+        help="Ollama model to use, for example mistral, llama3, qwen2.5:7b",
+    )
+    ask.add_argument(
+        "--limit",
+        type=int,
+        default=8,
+        help="Number of matching notes to include as context",
+    )
+    ask.add_argument(
+        "--min-score",
+        type=int,
+        default=6,
+        help="Minimum relevance score required for model context",
+    )
+    ask.set_defaults(func=documents_ask)
+
+    context = document_subcommands.add_parser(
+        "context",
+        help="Preview which Blue Book notes would be used as model context",
+    )
+    context.add_argument("question", nargs="+")
+    context.add_argument(
+        "--limit",
+        type=int,
+        default=8,
+        help="Number of context candidates to show",
+    )
+    context.set_defaults(func=documents_context)
 
     archive = subparsers.add_parser(
         "documents-archive",

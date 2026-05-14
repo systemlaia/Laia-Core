@@ -31,8 +31,12 @@ def core_services_config():
 
 
 def ollama_host() -> str:
+    env_host = os.environ.get("OLLAMA_BASE_URL")
+    if env_host:
+        return env_host.rstrip("/")
+
     cfg = core_services_config()
-    return cfg["ollama_host"].rstrip("/")
+    return cfg.get("ollama_host", "http://localhost:11434").rstrip("/")
 
 
 def ollama_generate(model: str, prompt: str) -> str:
