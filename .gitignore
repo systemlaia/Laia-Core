@@ -1,58 +1,47 @@
-# Secrets
-*.env
-*.token
-*.key
-
-# Home Assistant
-*long_lived*
-
-# System
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
-# Logs
-logs/
-*.log
-
-# Obsidian (local workspace)
-.obsidian/
-
-# Backups
-homepage/config-backup-*/
-
-# Archive (large / raw data)
-archive/
-
-# Node / Python junk
-node_modules/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
 
-# Docker volumes / runtime data
-open-webui/
+# Logs / runtime
+*.log
+logs/
+tmp/
+.temp/
 
-# Temp / scratch
+# LAIA generated archive artifacts
+archive/catalog/
+archive/reports/
+archive/manifests/
+archive/evidence/
+archive/tmp/
+archive/**/*.sqlite
+archive/**/*.sqlite3
+archive/**/*.db
+
+# Obsidian volatile workspace state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+
+# Obsidian cache-ish / local-only state
+.trash/
+.obsidian/cache/
+.obsidian/plugins/*/data.json.tmp
+
+# Common temporary files
 *.tmp
+*.swp
+~$*
 
-# Infrastructure runtime data
-caddy/
-filebrowser/
-n8n/
-ollama/
-portainer/
-postgres/
-redis/
-
-# Databases
-*.db
-
-# Local notes (optional)
-Mac mini.md
-# local backups
-backups/
-*.backup
-*.bak
-*.tar.gz
-*.tar.gz
-*.tar.gz
-*.tar.gz
-.vscode/
+# Local-only / experimental service work
+services/
+scripts/laia-comfy-start.sh
+scripts/laia_manifest/catalog_search.py
