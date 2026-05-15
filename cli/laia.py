@@ -1255,6 +1255,38 @@ def documents_search(args):
 
 
 
+
+DOCUMENT_QUERY_STOPWORDS = {
+    "what", "does", "blue", "book", "say", "about", "through", "using",
+    "only", "with", "from", "into", "that", "this", "there", "their",
+    "would", "could", "should", "explain", "tell", "give", "show",
+    "lens", "note", "notes", "source", "sources"
+}
+
+
+def document_query_terms(text: str) -> list[str]:
+    cleaned = (
+        text.replace("?", " ")
+        .replace(",", " ")
+        .replace(".", " ")
+        .replace(";", " ")
+        .replace(":", " ")
+        .replace("/", " ")
+        .replace("-", " ")
+    )
+
+    terms = []
+    for term in cleaned.split():
+        term = term.strip().lower()
+        if len(term) <= 2:
+            continue
+        if term in DOCUMENT_QUERY_STOPWORDS:
+            continue
+        terms.append(term)
+
+    return terms
+
+
 def score_document_record(record: dict, query_terms: list[str]) -> int:
     haystack = " ".join([
         str(record.get("title", "")),
@@ -1287,6 +1319,21 @@ def score_document_record(record: dict, query_terms: list[str]) -> int:
         if term in haystack:
             score += 1
 
+    path_text = str(record.get("path", "")).lower()
+
+    # Strong topical folder boosts for LAIA research areas.
+    if "tarot" in query_terms and "/tarot/" in path_text:
+        score += 12
+    if "archetype" in query_terms or "archetypes" in query_terms:
+        if "/archetypes/" in path_text:
+            score += 12
+    if "jung" in query_terms or "jungian" in query_terms:
+        if "red book" in path_text or "/archetypes/" in path_text:
+            score += 8
+    if "individuation" in query_terms or "shadow" in query_terms:
+        if "shadow" in path_text or "/archetypes/" in path_text or "/tarot/" in path_text:
+            score += 6
+
     return score
 
 
@@ -1314,11 +1361,7 @@ def documents_ask(args):
     data = load_documents_index(include_body_if_missing=False)
     records = data.get("records", [])
 
-    query_terms = [
-        term.strip().lower()
-        for term in question.replace("?", " ").replace(",", " ").split()
-        if len(term.strip()) > 2
-    ]
+    query_terms = document_query_terms(question)
 
     scored = []
     for record in records:
@@ -1383,11 +1426,7 @@ def documents_context(args):
     data = load_documents_index(include_body_if_missing=False)
     records = data.get("records", [])
 
-    query_terms = [
-        term.strip().lower()
-        for term in question.replace("?", " ").replace(",", " ").split()
-        if len(term.strip()) > 2
-    ]
+    query_terms = document_query_terms(question)
 
     scored = []
     for record in records:
@@ -1418,11 +1457,7 @@ def select_document_context(question: str, *, limit: int = 8, min_score: int = 6
     data = load_documents_index(include_body_if_missing=False)
     records = data.get("records", [])
 
-    query_terms = [
-        term.strip().lower()
-        for term in question.replace("?", " ").replace(",", " ").split()
-        if len(term.strip()) > 2
-    ]
+    query_terms = document_query_terms(question)
 
     scored = []
     for record in records:
