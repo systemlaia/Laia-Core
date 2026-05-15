@@ -1409,6 +1409,199 @@ def documents_context(args):
         print("")
 
 
+
+def slugify_packet_name(value: str) -> str:
+    return slugify(value)[:80]
+
+
+def select_document_context(question: str, *, limit: int = 8, min_score: int = 6):
+    data = load_documents_index(include_body_if_missing=False)
+    records = data.get("records", [])
+
+    query_terms = [
+        term.strip().lower()
+        for term in question.replace("?", " ").replace(",", " ").split()
+        if len(term.strip()) > 2
+    ]
+
+    scored = []
+    for record in records:
+        score = score_document_record(record, query_terms)
+        if score >= min_score:
+            scored.append((score, record))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[:limit]
+
+
+def documents_packet(args):
+    topic = " ".join(args.topic).strip()
+    model = getattr(args, "model", "mistral")
+    limit = getattr(args, "limit", 8)
+    min_score = getattr(args, "min_score", 10)
+    ask_model = getattr(args, "ask_model", False)
+
+    if not topic:
+        print("Packet needs a topic.")
+        raise SystemExit(1)
+
+    selected_scored = select_document_context(
+        topic,
+        limit=limit,
+        min_score=min_score,
+    )
+
+    if not selected_scored:
+        print(f"No matching Blue Book notes found for packet topic: {topic}")
+        print("Try a lower threshold, for example: --min-score 4")
+        raise SystemExit(1)
+
+    packet_root = Path.home() / "LAIA" / "context-packets" / "blue-book"
+    packet_root.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    topic_slug = slugify_packet_name(topic)
+    packet_id = f"{timestamp}-{topic_slug}"
+
+    packet_dir = packet_root / packet_id
+    packet_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = packet_dir / "packet.json"
+    md_path = packet_dir / "packet.md"
+
+    sources = []
+    context_blocks = []
+
+    for idx, (score, record) in enumerate(selected_scored, start=1):
+        source = {
+            "index": idx,
+            "score": score,
+            "title": record.get("title", "Untitled"),
+            "path": record.get("path", ""),
+            "absolute_path": record.get("absolute_path", ""),
+            "type": record.get("type", "note"),
+            "tags": record.get("tags", []),
+            "excerpt": record.get("excerpt", ""),
+        }
+        sources.append(source)
+
+        context_blocks.append(
+            f"[{idx}] {source['title']}\n"
+            f"Score: {score}\n"
+            f"Path: {source['path']}\n\n"
+            f"{source['excerpt']}\n"
+        )
+
+    generated_summary = None
+
+    if ask_model:
+        context = "\n---\n".join(context_blocks)
+
+        prompt = f"""You are LAIA's local Librarian Node.
+
+Build a concise context packet summary using only the Blue Book source excerpts below.
+
+Topic:
+{topic}
+
+Source excerpts:
+{context}
+
+Return Markdown with:
+# Summary
+## What this packet contains
+## Key facts
+## Useful commands or paths
+## Gaps / follow-up notes
+
+Include source path references inline where useful.
+"""
+
+        print(f"==> Asking {model} to summarize packet context")
+        generated_summary = ollama_generate(model, prompt)
+
+    packet = {
+        "packet_type": "laia_blue_book_context_packet",
+        "packet_id": packet_id,
+        "topic": topic,
+        "generated_at": datetime.now().isoformat(),
+        "vault": str(BLUE_BOOK_VAULT),
+        "index_path": str(Path.home() / "LAIA" / "indexes" / "blue-book-index.json"),
+        "model_summary_generated": ask_model,
+        "model": model if ask_model else None,
+        "limit": limit,
+        "min_score": min_score,
+        "source_count": len(sources),
+        "sources": sources,
+        "summary": generated_summary,
+    }
+
+    json_path.write_text(
+        json.dumps(packet, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    md = []
+    md.append("---")
+    md.append(f"type: context_packet")
+    md.append(f"packet_id: {packet_id}")
+    md.append(f"topic: {topic}")
+    md.append(f"source: blue_book")
+    md.append(f"source_count: {len(sources)}")
+    md.append(f"generated_at: {packet['generated_at']}")
+    md.append("---")
+    md.append("")
+    md.append(f"# Context Packet — {topic}")
+    md.append("")
+    md.append(f"- Packet ID: `{packet_id}`")
+    md.append(f"- Vault: `{BLUE_BOOK_VAULT}`")
+    md.append(f"- Sources: `{len(sources)}`")
+    md.append(f"- Min score: `{min_score}`")
+    md.append("")
+
+    if generated_summary:
+        md.append("## Model Summary")
+        md.append("")
+        md.append(generated_summary)
+        md.append("")
+
+    md.append("## Sources")
+    md.append("")
+
+    for source in sources:
+        md.append(f"### [{source['index']}] {source['title']}")
+        md.append("")
+        md.append(f"- Score: `{source['score']}`")
+        md.append(f"- Path: `{source['path']}`")
+        md.append(f"- Type: `{source['type']}`")
+        if source.get("tags"):
+            md.append(f"- Tags: `{source['tags']}`")
+        md.append("")
+        md.append("#### Excerpt")
+        md.append("")
+        md.append(source.get("excerpt", "") or "_No excerpt available._")
+        md.append("")
+
+    md_path.write_text("\n".join(md), encoding="utf-8")
+
+    latest_md = packet_root / f"{topic_slug}-latest.md"
+    latest_json = packet_root / f"{topic_slug}-latest.json"
+
+    latest_md.write_text(md_path.read_text(encoding="utf-8"), encoding="utf-8")
+    latest_json.write_text(json_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    print("==> LAIA Context Packet")
+    print(f"Topic: {topic}")
+    print(f"Packet ID: {packet_id}")
+    print(f"Sources: {len(sources)}")
+    print(f"Markdown: {md_path}")
+    print(f"JSON: {json_path}")
+    print()
+    print("==> Source summary")
+    for source in sources:
+        print(f"- Score {source['score']}: {source['title']} — {source['path']}")
+
+
 def add_documents_parser(subparsers):
     documents = subparsers.add_parser(
         "documents",
@@ -1499,6 +1692,35 @@ def add_documents_parser(subparsers):
         help="Number of context candidates to show",
     )
     context.set_defaults(func=documents_context)
+
+    packet = document_subcommands.add_parser(
+        "packet",
+        help="Build a reusable LAIA context packet from matching Blue Book notes",
+    )
+    packet.add_argument("topic", nargs="+")
+    packet.add_argument(
+        "--limit",
+        type=int,
+        default=8,
+        help="Number of source notes to include",
+    )
+    packet.add_argument(
+        "--min-score",
+        type=int,
+        default=10,
+        help="Minimum relevance score required for packet sources",
+    )
+    packet.add_argument(
+        "--ask-model",
+        action="store_true",
+        help="Ask the local model to generate a packet summary",
+    )
+    packet.add_argument(
+        "--model",
+        default="mistral",
+        help="Ollama model to use when --ask-model is enabled",
+    )
+    packet.set_defaults(func=documents_packet)
 
     archive = subparsers.add_parser(
         "documents-archive",
