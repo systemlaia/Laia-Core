@@ -1394,7 +1394,43 @@ def documents_ask(args):
 
     context = "\n---\n".join(context_blocks)
 
-    prompt = f"""You are LAIA's local document assistant.
+    mode = getattr(args, "mode", "strict")
+
+    if mode == "interpretive":
+        prompt = f"""You are LAIA's local symbolic research assistant.
+
+Use the Blue Book Obsidian vault context below as your source material.
+
+You may make clearly labeled symbolic, Jungian, archetypal, or systems-thinking interpretations, but you must distinguish:
+- what the notes explicitly say
+- what you are inferring from the notes
+- what remains uncertain or needs more source material
+
+Question:
+{question}
+
+Blue Book context:
+{context}
+
+Answer for Paul in Markdown with these sections:
+
+## Direct Source Reading
+Summarize what the selected Blue Book notes explicitly say.
+
+## Interpretive / Jungian Reading
+Make careful symbolic or archetypal inferences from the selected notes.
+
+## LAIA Research Use
+Explain how this could be useful as a LAIA research packet, agent memory, personal knowledge map, or symbolic interface.
+
+## Gaps / Follow-up
+Name missing sources, weak spots, or next notes to inspect.
+
+## Sources Used
+List the note paths you relied on.
+"""
+    else:
+        prompt = f"""You are LAIA's local document assistant.
 
 Use only the Blue Book Obsidian vault context below. If the answer is not supported by the context, say that the current index does not contain enough information.
 
@@ -1475,6 +1511,7 @@ def documents_packet(args):
     limit = getattr(args, "limit", 8)
     min_score = getattr(args, "min_score", 10)
     ask_model = getattr(args, "ask_model", False)
+    mode = getattr(args, "mode", "strict")
 
     if not topic:
         print("Packet needs a topic.")
@@ -1532,7 +1569,31 @@ def documents_packet(args):
     if ask_model:
         context = "\n---\n".join(context_blocks)
 
-        prompt = f"""You are LAIA's local Librarian Node.
+        if mode == "interpretive":
+            prompt = f"""You are LAIA's local symbolic research assistant.
+
+Build an interpretive context packet summary using only the Blue Book source excerpts below.
+
+You may make clearly labeled symbolic, Jungian, archetypal, or systems-thinking interpretations, but separate direct evidence from inference.
+
+Topic:
+{topic}
+
+Source excerpts:
+{context}
+
+Return Markdown with:
+# Summary
+## Direct Source Reading
+## Interpretive / Jungian Reading
+## LAIA Research Use
+## Key Symbols / Archetypes
+## Gaps / follow-up notes
+
+Include source path references inline where useful.
+"""
+        else:
+            prompt = f"""You are LAIA's local Librarian Node.
 
 Build a concise context packet summary using only the Blue Book source excerpts below.
 
@@ -1564,6 +1625,7 @@ Include source path references inline where useful.
         "index_path": str(Path.home() / "LAIA" / "indexes" / "blue-book-index.json"),
         "model_summary_generated": ask_model,
         "model": model if ask_model else None,
+        "mode": mode,
         "limit": limit,
         "min_score": min_score,
         "source_count": len(sources),
@@ -1592,6 +1654,7 @@ Include source path references inline where useful.
     md.append(f"- Vault: `{BLUE_BOOK_VAULT}`")
     md.append(f"- Sources: `{len(sources)}`")
     md.append(f"- Min score: `{min_score}`")
+    md.append(f"- Mode: `{mode}`")
     md.append("")
 
     if generated_summary:
@@ -1713,6 +1776,12 @@ def add_documents_parser(subparsers):
         default=6,
         help="Minimum relevance score required for model context",
     )
+    ask.add_argument(
+        "--mode",
+        choices=["strict", "interpretive"],
+        default="strict",
+        help="Answer mode: strict source summary or clearly labeled symbolic interpretation",
+    )
     ask.set_defaults(func=documents_ask)
 
     context = document_subcommands.add_parser(
@@ -1754,6 +1823,12 @@ def add_documents_parser(subparsers):
         "--model",
         default="mistral",
         help="Ollama model to use when --ask-model is enabled",
+    )
+    packet.add_argument(
+        "--mode",
+        choices=["strict", "interpretive"],
+        default="strict",
+        help="Packet summary mode: strict source summary or clearly labeled symbolic interpretation",
     )
     packet.set_defaults(func=documents_packet)
 
