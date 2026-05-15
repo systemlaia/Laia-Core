@@ -45,3 +45,8 @@ archive/**/*.db
 services/
 scripts/laia-comfy-start.sh
 scripts/laia_manifest/catalog_search.py
+
+# LAIA generated NAS manifests
+archive/nas_manifests/*.csv
+archive/nas_manifests/*.json
+archive/nas_manifests/*.md
