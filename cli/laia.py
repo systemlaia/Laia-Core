@@ -1074,6 +1074,32 @@ def documents_archive_status(_args=None):
 
 
 
+
+def load_frontmatter_safe_for_index(path: Path):
+    """
+    Load Obsidian Markdown frontmatter for indexing.
+
+    Obsidian templates may contain placeholders like {{date:YYYY-MM-DD}},
+    which are useful inside Obsidian but invalid YAML. For indexing, treat
+    invalid frontmatter as plain note text instead of failing loudly.
+    """
+    text = path.read_text(encoding="utf-8")
+
+    if not text.startswith("---\n"):
+        return {}, text
+
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text
+
+    try:
+        fm = yaml.safe_load(text[4:end]) or {}
+        body = text[end + 5:]
+        return fm, body
+    except Exception:
+        return {}, text
+
+
 def markdown_title(path: Path, body: str, fm: dict) -> str:
     if fm.get("title"):
         return str(fm["title"]).strip()
@@ -1136,12 +1162,12 @@ def documents_index(args):
             continue
         if ".git" in note.parts:
             continue
+        if "99_TEMPLATES" in note.parts:
+            continue
+        if "Templates" in note.parts:
+            continue
 
-        try:
-            fm, body = load_frontmatter(note)
-        except Exception as e:
-            fm, body = {}, ""
-            print(f"WARN: Could not read {note}: {e}")
+        fm, body = load_frontmatter_safe_for_index(note)
 
         rel = str(note.relative_to(vault))
         stat = note.stat()
