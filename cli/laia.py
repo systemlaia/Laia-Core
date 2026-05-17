@@ -2503,6 +2503,23 @@ def visual_generate_submit(args):
         encoding="utf-8",
     )
 
+    prompt_id = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("Queued workflow:"):
+            prompt_id = line.split(":", 1)[1].strip()
+
+    prompt_id_path = packet / "prompt-id.json"
+    prompt_id_path.write_text(
+        json.dumps({
+            "packet": args.packet_name,
+            "prompt_id": prompt_id,
+            "workflow": args.workflow,
+            "workflow_submitted": str(submitted),
+            "created_at": datetime.now().isoformat(),
+        }, indent=2),
+        encoding="utf-8",
+    )
+
     provenance = provenance_write(
         service="visual",
         action="generation_submit",
@@ -2511,6 +2528,8 @@ def visual_generate_submit(args):
             "workflow": args.workflow,
             "workflow_submitted": str(submitted),
             "generation_log": str(generation_log),
+            "prompt_id": prompt_id,
+            "prompt_id_file": str(prompt_id_path),
             "status": "queued",
             "stdout": result.stdout.strip(),
         },
@@ -3408,14 +3427,42 @@ def visual_collect(args):
         print(f"Missing ComfyUI output directory: {source_dir}\n")
         return
 
-    files = sorted(
-        [f for f in source_dir.iterdir() if f.is_file()],
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
+    prompt_id_path = packet / "prompt-id.json"
+    files = []
 
-    if args.limit:
-        files = files[:args.limit]
+    if prompt_id_path.exists():
+        try:
+            import urllib.request
+
+            prompt_data = json.loads(prompt_id_path.read_text(encoding="utf-8", errors="replace"))
+            prompt_id = prompt_data.get("prompt_id", "")
+
+            if prompt_id:
+                with urllib.request.urlopen(f"http://127.0.0.1:8188/history/{prompt_id}", timeout=10) as r:
+                    history = json.loads(r.read().decode("utf-8"))
+
+                outputs = history.get(prompt_id, {}).get("outputs", {})
+
+                for node_output in outputs.values():
+                    for image in node_output.get("images", []):
+                        filename = image.get("filename")
+                        subfolder = image.get("subfolder", "")
+                        if filename:
+                            candidate = source_dir / subfolder / filename if subfolder else source_dir / filename
+                            if candidate.exists():
+                                files.append(candidate)
+        except Exception as e:
+            print(f"Prompt history lookup failed; falling back to newest files: {e}")
+
+    if not files:
+        files = sorted(
+            [f for f in source_dir.iterdir() if f.is_file()],
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+
+        if args.limit:
+            files = files[:args.limit]
 
     copied = []
 
