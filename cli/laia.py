@@ -3501,6 +3501,95 @@ def visual_outputs(args):
 
     print("")
 
+
+def visual_inspect(args):
+    import json
+    import hashlib
+    from PIL import Image
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL INSPECT\n")
+
+    if not packet:
+        print("Visual packet not found. Use: laia packets list\n")
+        return
+
+    outputs_dir = packet / "outputs"
+
+    if not outputs_dir.exists():
+        print("No outputs directory found. Run: laia visual collect <packet>\n")
+        return
+
+    files = sorted(
+        [f for f in outputs_dir.iterdir() if f.is_file()],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not files:
+        print("No output files found.\n")
+        return
+
+    inspected = []
+
+    for f in files:
+        row = {
+            "filename": f.name,
+            "path": str(f),
+            "bytes": f.stat().st_size,
+            "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+        }
+
+        h = hashlib.sha256()
+        with f.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        row["sha256"] = h.hexdigest()
+
+        try:
+            with Image.open(f) as img:
+                row["format"] = img.format
+                row["width"] = img.width
+                row["height"] = img.height
+                row["mode"] = img.mode
+                row["info"] = {k: str(v)[:500] for k, v in img.info.items()}
+        except Exception as e:
+            row["image_error"] = str(e)
+
+        inspected.append(row)
+
+    out = packet / "visual-inspection.json"
+    out.write_text(json.dumps({
+        "packet": args.packet_name,
+        "inspected_at": datetime.now().isoformat(),
+        "files": inspected,
+    }, indent=2), encoding="utf-8")
+
+    provenance = provenance_write(
+        service="visual",
+        action="outputs_inspected",
+        packet=args.packet_name,
+        details={
+            "inspection": str(out),
+            "count": len(inspected),
+        },
+    )
+
+    print(f"Packet: {packet}")
+    print(f"Inspection: {out}")
+    print(f"Files inspected: {len(inspected)}")
+    print(f"Provenance: {provenance}\n")
+
+    for row in inspected:
+        print(f"- {row.get('filename')}")
+        print(f"  size: {row.get('bytes')} bytes")
+        if "width" in row:
+            print(f"  dimensions: {row.get('width')}x{row.get('height')}")
+            print(f"  format: {row.get('format')}")
+        print(f"  sha256: {row.get('sha256')}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3654,6 +3743,10 @@ def main():
     visual_outputs_p = visual_sub.add_parser("outputs")
     visual_outputs_p.add_argument("packet_name")
     visual_outputs_p.set_defaults(func=visual_outputs)
+
+    visual_inspect_p = visual_sub.add_parser("inspect")
+    visual_inspect_p.add_argument("packet_name")
+    visual_inspect_p.set_defaults(func=visual_inspect)
 
     visual_submit_p = visual_sub.add_parser("submit")
     visual_submit_p.add_argument("packet_name")
