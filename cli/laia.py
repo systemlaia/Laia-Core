@@ -3590,6 +3590,110 @@ def visual_inspect(args):
         print(f"  sha256: {row.get('sha256')}")
     print("")
 
+
+def visual_report(args):
+    import json
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL REPORT\n")
+
+    if not packet:
+        print("Visual packet not found. Use: laia packets list\n")
+        return
+
+    prompt_path = packet / "prompt.txt"
+    output_manifest = packet / "visual-output-manifest.json"
+    inspection_path = packet / "visual-inspection.json"
+    generation_log = packet / "generation-result.txt"
+
+    provenance = [
+        row for row in provenance_entries()
+        if args.packet_name in str(row.get("packet", ""))
+    ]
+
+    lines = [
+        "# LAIA Visual Report",
+        "",
+        f"- Packet: `{args.packet_name}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Prompt",
+        "",
+    ]
+
+    if prompt_path.exists():
+        lines.append(prompt_path.read_text(encoding="utf-8", errors="replace").strip())
+    else:
+        lines.append("_No prompt.txt found._")
+
+    lines += ["", "## Generation", ""]
+
+    if generation_log.exists():
+        lines.append("```text")
+        lines.append(generation_log.read_text(encoding="utf-8", errors="replace").strip()[:2000])
+        lines.append("```")
+    else:
+        lines.append("_No generation-result.txt found._")
+
+    lines += ["", "## Outputs", ""]
+
+    if output_manifest.exists():
+        data = json.loads(output_manifest.read_text(encoding="utf-8", errors="replace"))
+        lines.append(f"- Source dir: `{data.get('source_dir')}`")
+        lines.append(f"- Outputs dir: `{data.get('outputs_dir')}`")
+        lines.append(f"- Copied count: `{data.get('copied_count', len(data.get('files_copied', [])))}`")
+        lines.append(f"- Present count: `{data.get('present_count', len(data.get('files_present', [])))}`")
+        lines.append("")
+        for item in data.get("files_present", []):
+            lines.append(f"- `{item.get('filename')}` — {item.get('bytes')} bytes")
+    else:
+        lines.append("_No visual-output-manifest.json found._")
+
+    lines += ["", "## Inspection", ""]
+
+    if inspection_path.exists():
+        data = json.loads(inspection_path.read_text(encoding="utf-8", errors="replace"))
+        for item in data.get("files", []):
+            lines.append(f"### {item.get('filename')}")
+            lines.append("")
+            lines.append(f"- Format: `{item.get('format')}`")
+            lines.append(f"- Dimensions: `{item.get('width')}x{item.get('height')}`")
+            lines.append(f"- Mode: `{item.get('mode')}`")
+            lines.append(f"- Bytes: `{item.get('bytes')}`")
+            lines.append(f"- SHA256: `{item.get('sha256')}`")
+            lines.append("")
+    else:
+        lines.append("_No visual-inspection.json found._")
+
+    lines += ["", "## Provenance Events", ""]
+
+    if provenance:
+        for row in provenance:
+            lines.append(f"- `{row.get('timestamp')}` — **{row.get('service')}:{row.get('action')}**")
+            details = row.get("details", {})
+            if details:
+                for k, v in details.items():
+                    lines.append(f"  - `{k}`: `{v}`")
+    else:
+        lines.append("_No provenance events found._")
+
+    out = packet / "visual-report.md"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    prov = provenance_write(
+        service="visual",
+        action="report_created",
+        packet=args.packet_name,
+        details={
+            "report": str(out),
+        },
+    )
+
+    print(f"Packet: {packet}")
+    print(f"Report: {out}")
+    print(f"Provenance: {prov}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3747,6 +3851,10 @@ def main():
     visual_inspect_p = visual_sub.add_parser("inspect")
     visual_inspect_p.add_argument("packet_name")
     visual_inspect_p.set_defaults(func=visual_inspect)
+
+    visual_report_p = visual_sub.add_parser("report")
+    visual_report_p.add_argument("packet_name")
+    visual_report_p.set_defaults(func=visual_report)
 
     visual_submit_p = visual_sub.add_parser("submit")
     visual_submit_p.add_argument("packet_name")
