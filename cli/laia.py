@@ -2007,13 +2007,13 @@ def packets_show(args):
         getattr(args, "packet_name", None)
     )
 
-    print("\\nLAIA PACKET SHOW\\n")
+    print("\nLAIA PACKET SHOW\n")
 
     if not packet:
         print("Packet not found. Use: laia packets list\\n")
         return
 
-    print(f"Packet: {packet}\\n")
+    print(f"Packet: {packet}\n")
 
     preferred = [
         "README.md",
@@ -2084,7 +2084,7 @@ def packets_list(_args=None):
         print("No packets found.\n")
 
 def packets_latest(args=None):
-    print("\\nLAIA LATEST PACKET\\n")
+    print("\nLAIA LATEST PACKET\n")
 
     categories = packet_categories()
 
