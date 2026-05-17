@@ -3359,6 +3359,84 @@ def doctor_phase2(_args=None):
     print(f"Failed: {len(failed)}")
     print("")
 
+
+def comfy_output_dir():
+    return REPO_ROOT / "services" / "visual" / "ComfyUI" / "output"
+
+
+def visual_collect(args):
+    import json
+    import shutil
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL COLLECT\n")
+
+    if not packet:
+        print("Visual packet not found. Use: laia packets list\n")
+        return
+
+    source_dir = comfy_output_dir()
+    collected_dir = packet / "outputs"
+    collected_dir.mkdir(parents=True, exist_ok=True)
+
+    if not source_dir.exists():
+        print(f"Missing ComfyUI output directory: {source_dir}\n")
+        return
+
+    files = sorted(
+        [f for f in source_dir.iterdir() if f.is_file()],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    if args.limit:
+        files = files[:args.limit]
+
+    copied = []
+
+    for src in files:
+        dst = collected_dir / src.name
+        if dst.exists() and not args.force:
+            continue
+        shutil.copy2(src, dst)
+        copied.append({
+            "source": str(src),
+            "collected": str(dst),
+            "bytes": dst.stat().st_size,
+            "modified": datetime.fromtimestamp(dst.stat().st_mtime).isoformat(),
+        })
+
+    manifest_path = packet / "visual-output-manifest.json"
+    manifest = {
+        "packet": args.packet_name,
+        "collected_at": datetime.now().isoformat(),
+        "source_dir": str(source_dir),
+        "outputs_dir": str(collected_dir),
+        "files_collected": copied,
+    }
+
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    provenance = provenance_write(
+        service="visual",
+        action="outputs_collected",
+        packet=args.packet_name,
+        details={
+            "source_dir": str(source_dir),
+            "outputs_dir": str(collected_dir),
+            "manifest": str(manifest_path),
+            "count": len(copied),
+        },
+    )
+
+    print(f"Packet: {packet}")
+    print(f"Source: {source_dir}")
+    print(f"Collected dir: {collected_dir}")
+    print(f"Files copied: {len(copied)}")
+    print(f"Manifest: {manifest_path}")
+    print(f"Provenance: {provenance}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3502,6 +3580,12 @@ def main():
     visual_generate_p.add_argument("packet_name")
     visual_generate_p.add_argument("--dry-run", action="store_true")
     visual_generate_p.set_defaults(func=visual_generate)
+
+    visual_collect_p = visual_sub.add_parser("collect")
+    visual_collect_p.add_argument("packet_name")
+    visual_collect_p.add_argument("--limit", type=int, default=1)
+    visual_collect_p.add_argument("--force", action="store_true")
+    visual_collect_p.set_defaults(func=visual_collect)
 
     visual_submit_p = visual_sub.add_parser("submit")
     visual_submit_p.add_argument("packet_name")
