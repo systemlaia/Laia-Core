@@ -2372,6 +2372,63 @@ Created: {datetime.now().isoformat()}
     print(f"Created visual packet: {target}")
     print("")
 
+
+def visual_generate(args):
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL GENERATE\n")
+
+    if not packet:
+        print("Visual packet not found. Use: laia packets list\n")
+        return
+
+    prompt_path = packet / "prompt.txt"
+    positive_path = packet / "positive.txt"
+    negative_path = packet / "negative.txt"
+    profile_path = packet / "profile.yaml"
+
+    missing = [
+        str(p) for p in [prompt_path, positive_path, negative_path, profile_path]
+        if not p.exists()
+    ]
+
+    if missing:
+        print("Packet is incomplete:")
+        for item in missing:
+            print(f"- Missing: {item}")
+        print("")
+        return
+
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8", errors="replace")) or {}
+    prompt = prompt_path.read_text(encoding="utf-8", errors="replace").strip()
+    positive = positive_path.read_text(encoding="utf-8", errors="replace").strip()
+    negative = negative_path.read_text(encoding="utf-8", errors="replace").strip()
+    outputs = profile.get("outputs", {})
+
+    print(f"Packet: {packet}")
+    print(f"Profile: {profile.get('name', '')}")
+    print(f"Checkpoint: {profile.get('checkpoint', '')}")
+    print("")
+    print("Prompt:")
+    print(prompt)
+    print("")
+    print("Positive:")
+    print(positive)
+    print("")
+    print("Negative:")
+    print(negative)
+    print("")
+    print("Output plan:")
+    print(f"- Folder: {outputs.get('folder', 'services/visual/outputs')}")
+    print(f"- Prefix: {outputs.get('prefix', 'laia_visual')}")
+
+    if args.dry_run:
+        print("\nNo generation submitted. Dry run only.\n")
+        return
+
+    print("\nLIVE GENERATION IS NOT ENABLED YET.")
+    print("Next step: wire this to services/visual/comfy_client.py after approval.\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2507,6 +2564,11 @@ def main():
     visual_packet_p.add_argument("profile")
     visual_packet_p.add_argument("prompt", nargs="+")
     visual_packet_p.set_defaults(func=visual_packet)
+
+    visual_generate_p = visual_sub.add_parser("generate")
+    visual_generate_p.add_argument("packet_name")
+    visual_generate_p.add_argument("--dry-run", action="store_true")
+    visual_generate_p.set_defaults(func=visual_generate)
 
     args = parser.parse_args()
 
