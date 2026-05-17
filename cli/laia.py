@@ -4249,6 +4249,89 @@ def visual_caption(args):
     print(caption)
     print("")
 
+
+def doctor_phase3(_args=None):
+    import json
+    import urllib.request
+    import subprocess
+
+    print("\nLAIA PHASE 3 DOCTOR\n")
+
+    checks = []
+
+    def check(name, ok, detail=""):
+        checks.append((name, ok, detail))
+        status = "PASS" if ok else "FAIL"
+        print(f"{status}: {name}" + (f" — {detail}" if detail else ""))
+
+    # Phase 2 base checks
+    check("LAIA root", LAIA_ROOT.exists(), str(LAIA_ROOT))
+    check("Packet index", (LAIA_ROOT / "index" / "packets" / "packet_index.json").exists())
+    check("Librarian index", (LAIA_ROOT / "index" / "librarian" / "librarian_index.json").exists())
+    check("Dashboard status", (publish_dir() / "LAIA_STATUS.md").exists())
+    check("Visual dashboard", (publish_dir() / "VISUAL_REPORTS.md").exists())
+    check("Packet states dashboard", (publish_dir() / "PACKET_STATES.md").exists())
+
+    # Services
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8188", timeout=3) as r:
+            check("ComfyUI", r.status == 200, "http://127.0.0.1:8188")
+    except Exception as e:
+        check("ComfyUI", False, str(e))
+
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        check("Ollama", result.returncode == 0, "ollama list")
+        check("LLaVA model", "llava" in result.stdout.lower(), "llava present")
+    except Exception as e:
+        check("Ollama", False, str(e))
+        check("LLaVA model", False, "ollama unavailable")
+
+    # Visual packet checks
+    visual_dir = packets_dir() / "visual"
+    visual_packets = [p for p in visual_dir.iterdir() if p.is_dir()] if visual_dir.exists() else []
+    check("Visual packets", len(visual_packets) > 0, f"{len(visual_packets)} found")
+
+    latest = None
+    if visual_packets:
+        latest = sorted(visual_packets, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        check("Latest visual packet", latest.exists(), latest.name)
+        check("Prompt ID", (latest / "prompt-id.json").exists())
+        check("Output manifest", (latest / "visual-output-manifest.json").exists())
+        check("Inspection", (latest / "visual-inspection.json").exists())
+        check("Caption", (latest / "visual-caption.json").exists())
+        check("Report", (latest / "visual-report.md").exists())
+        check("Packet state", (latest / "packet-state.json").exists())
+
+        manifest = latest / "visual-output-manifest.json"
+        if manifest.exists():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+                newest = data.get("newest_collected_output", "")
+                check("Newest collected output", bool(newest) and Path(newest).exists(), newest)
+                check("Manifest prompt_id", bool(data.get("prompt_id", "")), data.get("prompt_id", ""))
+            except Exception as e:
+                check("Output manifest readable", False, str(e))
+
+        state_file = latest / "packet-state.json"
+        if state_file.exists():
+            try:
+                state = json.loads(state_file.read_text(encoding="utf-8", errors="replace")).get("state", "")
+                check("Lifecycle state", state == "lifecycle_completed", state)
+            except Exception as e:
+                check("Lifecycle state", False, str(e))
+
+    failed = [c for c in checks if not c[1]]
+    print("")
+    print(f"Checks: {len(checks)}")
+    print(f"Failed: {len(failed)}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4571,6 +4654,10 @@ def main():
 
     phase2_doctor_p = sub.add_parser("phase2-doctor")
     phase2_doctor_p.set_defaults(func=doctor_phase2)
+
+
+    phase3_doctor_p = sub.add_parser("phase3-doctor")
+    phase3_doctor_p.set_defaults(func=doctor_phase3)
 
     args = parser.parse_args()
 
