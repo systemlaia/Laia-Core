@@ -2697,6 +2697,96 @@ def provenance_log(args):
     print("\nLAIA PROVENANCE LOG\n")
     print(f"Log written: {out}\n")
 
+
+def provenance_entries():
+    import json
+
+    d = provenance_log_dir()
+    entries = []
+
+    for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            row = json.loads(f.read_text(encoding="utf-8", errors="replace"))
+            row["_file"] = str(f)
+            entries.append(row)
+        except Exception:
+            continue
+
+    return entries
+
+
+def provenance_list(args):
+    print("\nLAIA PROVENANCE LIST\n")
+
+    entries = provenance_entries()
+
+    if not entries:
+        print("No provenance logs found.\n")
+        return
+
+    limit = getattr(args, "limit", 20)
+
+    for row in entries[:limit]:
+        print(f"- {row.get('timestamp')} | {row.get('service')}:{row.get('action')}")
+        if row.get("packet"):
+            print(f"  packet: {row.get('packet')}")
+        print(f"  file: {row.get('_file')}")
+    print("")
+
+
+def provenance_search(args):
+    query = " ".join(args.query).lower()
+
+    print(f"\nLAIA PROVENANCE SEARCH — {query}\n")
+
+    matches = []
+
+    for row in provenance_entries():
+        haystack = " ".join([
+            str(row.get("timestamp", "")),
+            str(row.get("service", "")),
+            str(row.get("action", "")),
+            str(row.get("packet", "")),
+            str(row.get("details", "")),
+            str(row.get("_file", "")),
+        ]).lower()
+
+        if query in haystack:
+            matches.append(row)
+
+    if not matches:
+        print("No provenance matches found.\n")
+        return
+
+    for row in matches[:20]:
+        print(f"- {row.get('timestamp')} | {row.get('service')}:{row.get('action')}")
+        if row.get("packet"):
+            print(f"  packet: {row.get('packet')}")
+        print(f"  file: {row.get('_file')}")
+    print("")
+
+
+def provenance_packet(args):
+    packet = args.packet_name.lower()
+
+    print(f"\nLAIA PROVENANCE PACKET — {args.packet_name}\n")
+
+    matches = [
+        row for row in provenance_entries()
+        if packet in str(row.get("packet", "")).lower()
+    ]
+
+    if not matches:
+        print("No provenance found for packet.\n")
+        return
+
+    for row in matches:
+        print(f"- {row.get('timestamp')} | {row.get('service')}:{row.get('action')}")
+        print(f"  file: {row.get('_file')}")
+        if row.get("details"):
+            print(f"  details: {row.get('details')}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2869,6 +2959,18 @@ def main():
     provenance_log_p.add_argument("--packet", default="")
     provenance_log_p.add_argument("--detail", nargs="*", default=[])
     provenance_log_p.set_defaults(func=provenance_log)
+
+    provenance_list_p = provenance_sub.add_parser("list")
+    provenance_list_p.add_argument("--limit", type=int, default=20)
+    provenance_list_p.set_defaults(func=provenance_list)
+
+    provenance_search_p = provenance_sub.add_parser("search")
+    provenance_search_p.add_argument("query", nargs="+")
+    provenance_search_p.set_defaults(func=provenance_search)
+
+    provenance_packet_p = provenance_sub.add_parser("packet")
+    provenance_packet_p.add_argument("packet_name")
+    provenance_packet_p.set_defaults(func=provenance_packet)
 
     args = parser.parse_args()
 
