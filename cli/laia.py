@@ -1974,6 +1974,78 @@ def nas_retrieval_packets_dir():
     return packets_dir() / "nas_retrieval"
 
 
+
+
+def packet_categories():
+    return {
+        "nas_retrieval": packets_dir() / "nas_retrieval",
+        "visual": packets_dir() / "visual",
+    }
+
+
+def find_packet(name_or_category, maybe_name=None):
+    categories = packet_categories()
+
+    if maybe_name:
+        d = categories.get(name_or_category)
+        if not d:
+            return None
+        p = d / maybe_name
+        return p if p.exists() else None
+
+    for d in categories.values():
+        p = d / name_or_category
+        if p.exists():
+            return p
+
+    return None
+
+
+def packets_show(args):
+    packet = find_packet(
+        args.category_or_name,
+        getattr(args, "packet_name", None)
+    )
+
+    print("\\nLAIA PACKET SHOW\\n")
+
+    if not packet:
+        print("Packet not found. Use: laia packets list\\n")
+        return
+
+    print(f"Packet: {packet}\\n")
+
+    preferred = [
+        "README.md",
+        "query.txt",
+        "prompt.txt",
+        "results.txt",
+        "notes.md"
+    ]
+
+    for name in preferred:
+        f = packet / name
+        if f.exists():
+            print(f"## {name}")
+            print(
+                f.read_text(
+                    encoding="utf-8",
+                    errors="replace"
+                )[:4000]
+            )
+            print("")
+
+    other_files = sorted(
+        f.name for f in packet.iterdir()
+        if f.is_file() and f.name not in preferred
+    )
+
+    if other_files:
+        print("## Other files")
+        for name in other_files:
+            print(f"- {name}")
+        print("")
+
 def packets_list(_args=None):
     print("\nLAIA PACKETS\n")
 
@@ -2011,26 +2083,60 @@ def packets_list(_args=None):
     if not found_any:
         print("No packets found.\n")
 
-def packets_latest(_args=None):
-    d = nas_retrieval_packets_dir()
-    print("\nLAIA LATEST PACKET\n")
-    if not d.exists():
-        print(f"Missing packet directory: {d}\n")
+def packets_latest(args=None):
+    print("\\nLAIA LATEST PACKET\\n")
+
+    categories = packet_categories()
+
+    category = getattr(args, "category", None) if args else None
+
+    if category:
+        selected = {
+            category: categories.get(category)
+        }
+    else:
+        selected = categories
+
+    latest_packet = None
+
+    for label, d in selected.items():
+        if not d or not d.exists():
+            continue
+
+        packets = sorted(
+            [p for p in d.iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+
+        if packets:
+            candidate = packets[0]
+
+            if (
+                latest_packet is None or
+                candidate.stat().st_mtime >
+                latest_packet.stat().st_mtime
+            ):
+                latest_packet = candidate
+
+    if not latest_packet:
+        print("No packets found.\\n")
         return
 
-    packets = sorted([p for p in d.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
-    if not packets:
-        print("No packets found.\n")
-        return
+    print(latest_packet)
 
-    latest = packets[0]
-    print(latest)
-    readme = latest / "README.md"
+    readme = latest_packet / "README.md"
+
     if readme.exists():
         print("")
-        print(readme.read_text(encoding="utf-8", errors="replace"))
-    print("")
+        print(
+            readme.read_text(
+                encoding="utf-8",
+                errors="replace"
+            )[:4000]
+        )
 
+    print("")
 
 def packets_create(args):
     import json
@@ -2366,7 +2472,13 @@ def main():
     packets_create_p.set_defaults(func=packets_create)
 
     packets_latest_p = packets_sub.add_parser("latest")
+    packets_latest_p.add_argument("category", nargs="?")
     packets_latest_p.set_defaults(func=packets_latest)
+
+    packets_show_p = packets_sub.add_parser("show")
+    packets_show_p.add_argument("category_or_name")
+    packets_show_p.add_argument("packet_name", nargs="?")
+    packets_show_p.set_defaults(func=packets_show)
 
     packets_list_p = packets_sub.add_parser("list")
     packets_list_p.set_defaults(func=packets_list)
