@@ -3248,6 +3248,7 @@ def publish_all(args=None):
     publish_packets(args)
     publish_provenance(args)
     publish_jobs(args)
+    publish_visual(args)
 
 
 def librarian_orphaned(_args=None):
@@ -3694,6 +3695,62 @@ def visual_report(args):
     print(f"Report: {out}")
     print(f"Provenance: {prov}\n")
 
+
+def publish_visual(_args=None):
+    out = publish_dir() / "VISUAL_REPORTS.md"
+
+    lines = [
+        "# LAIA Visual Reports",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+    ]
+
+    visual_dir = packets_dir() / "visual"
+
+    if not visual_dir.exists():
+        lines.append("_No visual packets found._")
+    else:
+        packets = sorted(
+            [p for p in visual_dir.iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+        if not packets:
+            lines.append("_No visual packets found._")
+        else:
+            for packet in packets:
+                report = packet / "visual-report.md"
+                inspection = packet / "visual-inspection.json"
+                outputs = packet / "outputs"
+
+                lines.append(f"## {packet.name}")
+                lines.append("")
+                lines.append(f"- Packet: `{packet}`")
+                lines.append(f"- Report: `{'PASS' if report.exists() else 'MISSING'}`")
+                lines.append(f"- Inspection: `{'PASS' if inspection.exists() else 'MISSING'}`")
+
+                if outputs.exists():
+                    output_files = [f for f in outputs.iterdir() if f.is_file()]
+                    lines.append(f"- Outputs: `{len(output_files)}`")
+                    for f in output_files[:10]:
+                        lines.append(f"  - `{f.name}`")
+                else:
+                    lines.append("- Outputs: `0`")
+
+                if report.exists():
+                    lines.append("")
+                    lines.append("### Report Preview")
+                    lines.append("")
+                    preview = report.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines.extend(preview[:40])
+
+                lines.append("")
+
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Published: {out}")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3971,6 +4028,9 @@ def main():
 
     publish_jobs_p = publish_sub.add_parser("jobs")
     publish_jobs_p.set_defaults(func=publish_jobs)
+
+    publish_visual_p = publish_sub.add_parser("visual")
+    publish_visual_p.set_defaults(func=publish_visual)
 
     publish_all_p = publish_sub.add_parser("all")
     publish_all_p.set_defaults(func=publish_all)
