@@ -105,9 +105,20 @@ def main():
         f.write(f"- CSV: `{csv_path}`\n")
         f.write(f"- JSON: `{json_path}`\n")
 
+    latest_csv = out / "nas_manifest_latest.csv"
+    latest_json = out / "nas_manifest_latest.json"
+    latest_md = out / "nas_manifest_latest.md"
+
+    latest_csv.write_text(csv_path.read_text())
+    latest_json.write_text(json_path.read_text())
+    latest_md.write_text(md_path.read_text())
+
     print(f"CSV:  {csv_path}")
     print(f"JSON: {json_path}")
     print(f"MD:   {md_path}")
+    print(f"Latest CSV:  {latest_csv}")
+    print(f"Latest JSON: {latest_json}")
+    print(f"Latest MD:   {latest_md}")
     print(f"Files indexed: {len(rows)}")
     print(f"Total size: {human_bytes(total_bytes)}")
 

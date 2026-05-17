@@ -1849,6 +1849,122 @@ def add_documents_parser(subparsers):
     archive_status.set_defaults(func=documents_archive_status)
 
 
+
+def nas_manifest_dir():
+    return LAIA_ROOT / "archive" / "nas_manifests"
+
+
+def nas_latest(_args=None):
+    d = nas_manifest_dir()
+    md = d / "nas_manifest_latest.md"
+    js = d / "nas_manifest_latest.json"
+
+    print("\nLAIA NAS LATEST\n")
+    print(f"Manifest dir: {d}")
+    print(f"Markdown: {'PASS' if md.exists() else 'MISSING'} — {md}")
+    print(f"JSON: {'PASS' if js.exists() else 'MISSING'} — {js}")
+
+    if md.exists():
+        print("")
+        print("Preview:")
+        text = md.read_text(encoding="utf-8", errors="replace")
+        print("\n".join(text.splitlines()[:30]))
+    print("")
+
+
+def nas_manifests(_args=None):
+    d = nas_manifest_dir()
+
+    print("\nLAIA NAS MANIFESTS\n")
+
+    if not d.exists():
+        print(f"Missing manifest directory: {d}\n")
+        return
+
+    files = sorted(
+        d.glob("nas_manifest_*"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True
+    )
+
+    if not files:
+        print("No NAS manifests found.\n")
+        return
+
+    for f in files[:20]:
+        print(f"- {f.name}")
+
+    print("")
+
+
+def nas_find(args):
+    import json
+
+    query = " ".join(args.query).lower()
+
+    d = nas_manifest_dir()
+    js = d / "nas_manifest_latest.json"
+    md = d / "nas_manifest_latest.md"
+
+    print(f"\nLAIA NAS FIND — {query}\n")
+
+    matches = []
+
+    if js.exists():
+        rows = json.loads(js.read_text(encoding="utf-8", errors="replace"))
+
+        for row in rows:
+            haystack = " ".join([
+                str(row.get("path", "")),
+                str(row.get("relative_path", "")),
+                str(row.get("filename", "")),
+                str(row.get("extension", "")),
+                str(row.get("top_level_dir", "")),
+            ]).lower()
+
+            if query in haystack:
+                matches.append(row)
+
+        if not matches:
+            print("No matches found in latest JSON manifest.\n")
+            return
+
+        for row in matches[:50]:
+            size = row.get("size_bytes", "")
+            rel = row.get("relative_path", row.get("path", ""))
+            mod = row.get("modified_time", "")
+            print(f"- {rel} | {size} bytes | modified {mod}")
+
+        if len(matches) > 50:
+            print(f"\n... {len(matches)-50} more matches")
+
+        print("")
+        return
+
+    if md.exists():
+        for line in md.read_text(
+            encoding="utf-8",
+            errors="replace"
+        ).splitlines():
+            if query in line.lower():
+                matches.append(line)
+
+        if not matches:
+            print("No matches found in latest markdown manifest.\n")
+            return
+
+        for line in matches[:50]:
+            print(line)
+
+        if len(matches) > 50:
+            print(f"\n... {len(matches)-50} more matches")
+
+        print("")
+        return
+
+    print(f"Missing latest manifest JSON: {js}")
+    print(f"Missing latest manifest Markdown: {md}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -1924,6 +2040,20 @@ def main():
 
     add_documents_parser(sub)
 
+
+
+    nas_p = sub.add_parser("nas")
+    nas_sub = nas_p.add_subparsers(dest="subcommand")
+
+    nas_latest_p = nas_sub.add_parser("latest")
+    nas_latest_p.set_defaults(func=nas_latest)
+
+    nas_manifests_p = nas_sub.add_parser("manifests")
+    nas_manifests_p.set_defaults(func=nas_manifests)
+
+    nas_find_p = nas_sub.add_parser("find")
+    nas_find_p.add_argument("query", nargs="+")
+    nas_find_p.set_defaults(func=nas_find)
 
     args = parser.parse_args()
 
