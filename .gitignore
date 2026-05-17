@@ -55,3 +55,9 @@ archive/nas_manifests/*.md
 !services/
 !services/openclaw/
 !services/openclaw/**
+
+# Ignore embedded ComfyUI checkout
+services/visual/ComfyUI/
+
+# Ignore embedded ComfyUI checkout
+services/visual/ComfyUI/

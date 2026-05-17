@@ -1,0 +1,24 @@
+name: laia_archival_v1
+description: Archival documentation, clean composition, realistic materials.
+
+checkpoint: juggernautXL.safetensors
+
+positive:
+  - archival photography
+  - technical documentation
+  - cinematic realism
+  - structured composition
+  - accurate materials
+  - clean lighting
+
+negative:
+  - blurry
+  - watermark
+  - warped geometry
+  - fake text
+  - extra limbs
+  - distorted perspective
+
+outputs:
+  folder: services/visual/outputs
+  prefix: laia_archival
