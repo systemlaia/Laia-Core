@@ -3437,6 +3437,48 @@ def visual_collect(args):
     print(f"Manifest: {manifest_path}")
     print(f"Provenance: {provenance}\n")
 
+
+def visual_outputs(args):
+    import json
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL OUTPUTS\n")
+
+    if not packet:
+        print("Visual packet not found. Use: laia packets list\n")
+        return
+
+    manifest = packet / "visual-output-manifest.json"
+    outputs_dir = packet / "outputs"
+
+    print(f"Packet: {packet}")
+
+    if not outputs_dir.exists():
+        print("No outputs directory found.\n")
+        return
+
+    files = sorted(
+        [f for f in outputs_dir.iterdir() if f.is_file()],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    print(f"Outputs dir: {outputs_dir}")
+    print(f"Files: {len(files)}\n")
+
+    for f in files:
+        print(f"- {f.name} | {f.stat().st_size} bytes")
+
+    if manifest.exists():
+        print("\nManifest:")
+        data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+        print(f"- collected_at: {data.get('collected_at')}")
+        print(f"- source_dir: {data.get('source_dir')}")
+        print(f"- count: {len(data.get('files_collected', []))}")
+
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3586,6 +3628,10 @@ def main():
     visual_collect_p.add_argument("--limit", type=int, default=1)
     visual_collect_p.add_argument("--force", action="store_true")
     visual_collect_p.set_defaults(func=visual_collect)
+
+    visual_outputs_p = visual_sub.add_parser("outputs")
+    visual_outputs_p.add_argument("packet_name")
+    visual_outputs_p.set_defaults(func=visual_outputs)
 
     visual_submit_p = visual_sub.add_parser("submit")
     visual_submit_p.add_argument("packet_name")
