@@ -3249,6 +3249,116 @@ def publish_all(args=None):
     publish_provenance(args)
     publish_jobs(args)
 
+
+def librarian_orphaned(_args=None):
+    print("\nLAIA LIBRARIAN ORPHANED\n")
+
+    categories = packet_categories()
+    provenance = provenance_entries()
+
+    packet_names = set()
+    packet_rows = []
+
+    for category, d in categories.items():
+        if not d.exists():
+            continue
+        for packet in d.iterdir():
+            if packet.is_dir():
+                packet_names.add(packet.name)
+                packet_rows.append((category, packet.name, packet))
+
+    packets_without_provenance = []
+    for category, name, packet in packet_rows:
+        related = [row for row in provenance if name in str(row.get("packet", ""))]
+        if not related:
+            packets_without_provenance.append((category, name, packet))
+
+    provenance_without_packet = []
+    for row in provenance:
+        packet = str(row.get("packet", ""))
+        if packet and packet not in packet_names:
+            provenance_without_packet.append(row)
+
+    print("## Packets without provenance")
+    if not packets_without_provenance:
+        print("- none")
+    else:
+        for category, name, packet in packets_without_provenance:
+            print(f"- [{category}] {name}")
+            print(f"  {packet}")
+
+    print("\n## Provenance referencing missing packets")
+    if not provenance_without_packet:
+        print("- none")
+    else:
+        for row in provenance_without_packet:
+            print(f"- {row.get('timestamp')} | {row.get('service')}:{row.get('action')}")
+            print(f"  packet: {row.get('packet')}")
+            print(f"  file: {row.get('_file')}")
+    print("")
+
+
+def jobs_reopen(args):
+    jobs_move_state(args, "approved")
+
+
+def publish_refresh(args):
+    import time
+
+    interval = args.interval
+    count = args.count
+
+    print("\nLAIA PUBLISH REFRESH\n")
+    print(f"Interval: {interval}s")
+    print(f"Count: {count if count else 'until stopped'}\n")
+
+    i = 0
+    while True:
+        packets_index()
+        librarian_index()
+        publish_all()
+        i += 1
+        print(f"Refresh complete: {i}")
+
+        if count and i >= count:
+            break
+
+        time.sleep(interval)
+
+
+def doctor_phase2(_args=None):
+    import urllib.request
+
+    print("\nLAIA PHASE 2 DOCTOR\n")
+
+    checks = []
+
+    def check(name, ok, detail=""):
+        checks.append((name, ok, detail))
+        status = "PASS" if ok else "FAIL"
+        print(f"{status}: {name}" + (f" — {detail}" if detail else ""))
+
+    check("LAIA root", LAIA_ROOT.exists(), str(LAIA_ROOT))
+    check("Packet index", (LAIA_ROOT / "index" / "packets" / "packet_index.json").exists())
+    check("Librarian index", (LAIA_ROOT / "index" / "librarian" / "librarian_index.json").exists())
+    check("Dashboard status", (publish_dir() / "LAIA_STATUS.md").exists())
+    check("Node registry", node_registry_path().exists())
+    check("NAS manifest", (LAIA_ROOT / "archive" / "nas_manifests" / "nas_manifest_latest.json").exists())
+    check("Jobs root", jobs_root().exists())
+    check("Provenance logs", len(list(provenance_log_dir().glob("*.json"))) > 0)
+
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8188", timeout=3) as r:
+            check("ComfyUI", r.status == 200, "http://127.0.0.1:8188")
+    except Exception as e:
+        check("ComfyUI", False, str(e))
+
+    failed = [c for c in checks if not c[1]]
+    print("")
+    print(f"Checks: {len(checks)}")
+    print(f"Failed: {len(failed)}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3461,6 +3571,9 @@ def main():
     librarian_index_p = librarian_sub.add_parser("index")
     librarian_index_p.set_defaults(func=librarian_index)
 
+    librarian_orphaned_p = librarian_sub.add_parser("orphaned")
+    librarian_orphaned_p.set_defaults(func=librarian_orphaned)
+
 
     jobs_p = sub.add_parser("jobs")
     jobs_sub = jobs_p.add_subparsers(dest="subcommand")
@@ -3486,6 +3599,10 @@ def main():
     jobs_complete_p.add_argument("job_id")
     jobs_complete_p.set_defaults(func=jobs_complete)
 
+    jobs_reopen_p = jobs_sub.add_parser("reopen")
+    jobs_reopen_p.add_argument("job_id")
+    jobs_reopen_p.set_defaults(func=jobs_reopen)
+
 
     publish_p = sub.add_parser("publish")
     publish_sub = publish_p.add_subparsers(dest="subcommand")
@@ -3504,6 +3621,15 @@ def main():
 
     publish_all_p = publish_sub.add_parser("all")
     publish_all_p.set_defaults(func=publish_all)
+
+    publish_refresh_p = publish_sub.add_parser("refresh")
+    publish_refresh_p.add_argument("--interval", type=int, default=60)
+    publish_refresh_p.add_argument("--count", type=int, default=1)
+    publish_refresh_p.set_defaults(func=publish_refresh)
+
+
+    phase2_doctor_p = sub.add_parser("phase2-doctor")
+    phase2_doctor_p.set_defaults(func=doctor_phase2)
 
     args = parser.parse_args()
 
