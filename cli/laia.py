@@ -3518,11 +3518,28 @@ def visual_collect(args):
     ]
 
     manifest_path = packet / "visual-output-manifest.json"
+    newest_collected_output = ""
+    if copied:
+        newest_collected_output = copied[0].get("collected", "")
+    elif present:
+        newest_collected_output = present[0].get("path", "")
+
+    prompt_id = ""
+    prompt_id_path = packet / "prompt-id.json"
+    if prompt_id_path.exists():
+        try:
+            prompt_data = json.loads(prompt_id_path.read_text(encoding="utf-8", errors="replace"))
+            prompt_id = prompt_data.get("prompt_id", "")
+        except Exception:
+            prompt_id = ""
+
     manifest = {
         "packet": args.packet_name,
         "collected_at": datetime.now().isoformat(),
+        "prompt_id": prompt_id,
         "source_dir": str(source_dir),
         "outputs_dir": str(collected_dir),
+        "newest_collected_output": newest_collected_output,
         "files_copied": copied,
         "files_present": present,
         "copied_count": len(copied),
@@ -3862,16 +3879,21 @@ def visual_lifecycle(args):
     print("STEP 2 — Inspect outputs")
     visual_inspect(o)
 
-    print("STEP 3 — Create report")
+    print("STEP 3 — Caption output")
+    o.model = getattr(args, "model", "llava:latest")
+    o.prompt = getattr(args, "caption_prompt", "")
+    visual_caption(o)
+
+    print("STEP 4 — Create report")
     visual_report(o)
 
-    print("STEP 4 — Rebuild librarian index")
+    print("STEP 5 — Rebuild librarian index")
     librarian_index(None)
 
-    print("STEP 5 — Publish visual dashboard")
+    print("STEP 6 — Publish visual dashboard")
     publish_visual(None)
 
-    print("STEP 6 — Publish operational dashboard")
+    print("STEP 7 — Publish operational dashboard")
     publish_all(None)
 
     packet = find_packet("visual", args.packet_name)
@@ -4109,17 +4131,32 @@ def visual_caption(args):
         print("No outputs directory found.\n")
         return
 
-    files = sorted(
-        [f for f in outputs_dir.iterdir() if f.is_file()],
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
+    manifest_path = packet / "visual-output-manifest.json"
+    image = None
 
-    if not files:
-        print("No output files found.\n")
-        return
+    if manifest_path.exists():
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8", errors="replace"))
+            newest = data.get("newest_collected_output", "")
+            if newest:
+                candidate = Path(newest)
+                if candidate.exists():
+                    image = candidate
+        except Exception:
+            image = None
 
-    image = files[0]
+    if image is None:
+        files = sorted(
+            [f for f in outputs_dir.iterdir() if f.is_file()],
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+
+        if not files:
+            print("No output files found.\n")
+            return
+
+        image = files[0]
 
     prompt = args.prompt or "Describe this image for an archival visual report."
 
@@ -4397,6 +4434,8 @@ def main():
     visual_lifecycle_p.add_argument("packet_name")
     visual_lifecycle_p.add_argument("--limit", type=int, default=1)
     visual_lifecycle_p.add_argument("--force", action="store_true")
+    visual_lifecycle_p.add_argument("--model", default="llava:latest")
+    visual_lifecycle_p.add_argument("--caption-prompt", default="")
     visual_lifecycle_p.set_defaults(func=visual_lifecycle)
 
     visual_submit_p = visual_sub.add_parser("submit")
