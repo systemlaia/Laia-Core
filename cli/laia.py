@@ -3249,6 +3249,7 @@ def publish_all(args=None):
     publish_provenance(args)
     publish_jobs(args)
     publish_visual(args)
+    publish_states(args)
 
 
 def librarian_orphaned(_args=None):
@@ -3909,6 +3910,47 @@ def packets_state_show(args):
 
     print(state_path.read_text(encoding="utf-8", errors="replace"))
 
+
+def publish_states(_args=None):
+    import json
+
+    out = publish_dir() / "PACKET_STATES.md"
+
+    lines = [
+        "# LAIA Packet States",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+        "| Category | Packet | State | Updated |",
+        "|---|---|---|---|",
+    ]
+
+    found = False
+
+    for category, d in packet_categories().items():
+        if not d.exists():
+            continue
+
+        for packet in sorted([p for p in d.iterdir() if p.is_dir()]):
+            state_path = packet / "packet-state.json"
+
+            if state_path.exists():
+                data = json.loads(state_path.read_text(encoding="utf-8", errors="replace"))
+                state = data.get("state", "unknown")
+                updated = data.get("updated_at", "")
+            else:
+                state = "unknown"
+                updated = ""
+
+            found = True
+            lines.append(f"| `{category}` | `{packet.name}` | `{state}` | `{updated}` |")
+
+    if not found:
+        lines.append("| _none_ | _none_ | _none_ | _none_ |")
+
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Published: {out}")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4208,6 +4250,9 @@ def main():
 
     publish_visual_p = publish_sub.add_parser("visual")
     publish_visual_p.set_defaults(func=publish_visual)
+
+    publish_states_p = publish_sub.add_parser("states")
+    publish_states_p.set_defaults(func=publish_states)
 
     publish_all_p = publish_sub.add_parser("all")
     publish_all_p.set_defaults(func=publish_all)
