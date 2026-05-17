@@ -2795,6 +2795,59 @@ def provenance_packet(args):
             print(f"  details: {row.get('details')}")
     print("")
 
+
+def node_registry_path():
+    return REPO_ROOT / "services" / "nodes" / "node-registry.yaml"
+
+
+def load_node_registry():
+    path = node_registry_path()
+    if not path.exists():
+        return {"nodes": {}}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {"nodes": {}}
+
+
+def nodes_list(_args=None):
+    data = load_node_registry()
+    nodes = data.get("nodes", {})
+
+    print("\nLAIA NODES\n")
+
+    if not nodes:
+        print("No nodes registered.\n")
+        return
+
+    for node_id, node in nodes.items():
+        print(f"- {node_id}: {node.get('name', '')}")
+        print(f"  role: {node.get('role', '')}")
+    print("")
+
+
+def nodes_show(args):
+    data = load_node_registry()
+    node = data.get("nodes", {}).get(args.node_id)
+
+    print(f"\nLAIA NODE — {args.node_id}\n")
+
+    if not node:
+        print("Node not found.\n")
+        return
+
+    print(yaml.safe_dump(node, sort_keys=False, allow_unicode=True))
+
+
+def nodes_capabilities(_args=None):
+    data = load_node_registry()
+    nodes = data.get("nodes", {})
+
+    print("\nLAIA NODE CAPABILITIES\n")
+
+    for node_id, node in nodes.items():
+        print(f"## {node_id}")
+        for service in node.get("services", []):
+            print(f"- {service}")
+        print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2979,6 +3032,20 @@ def main():
     provenance_packet_p = provenance_sub.add_parser("packet")
     provenance_packet_p.add_argument("packet_name")
     provenance_packet_p.set_defaults(func=provenance_packet)
+
+
+    nodes_p = sub.add_parser("nodes")
+    nodes_sub = nodes_p.add_subparsers(dest="subcommand")
+
+    nodes_list_p = nodes_sub.add_parser("list")
+    nodes_list_p.set_defaults(func=nodes_list)
+
+    nodes_show_p = nodes_sub.add_parser("show")
+    nodes_show_p.add_argument("node_id")
+    nodes_show_p.set_defaults(func=nodes_show)
+
+    nodes_cap_p = nodes_sub.add_parser("capabilities")
+    nodes_cap_p.set_defaults(func=nodes_capabilities)
 
     args = parser.parse_args()
 

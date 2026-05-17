@@ -1,0 +1,47 @@
+nodes:
+  core:
+    name: LAIA Core
+    host: Pauls-Mac-mini.local
+    role: primary_orchestrator
+    services:
+      - openclaw
+      - ollama
+      - laia_cli
+      - packets
+      - provenance
+    allowed_paths:
+      - ~/Projects/Laia-Core
+      - ~/LAIA
+    restricted:
+      - destructive_shell
+      - nas_mutation_without_approval
+
+  archivist:
+    name: LAIA Archivist
+    role: archive_intelligence
+    services:
+      - nas_manifest
+      - packet_registry
+      - search
+    allowed_paths:
+      - ~/LAIA/archive/nas_manifests
+      - ~/LAIA/packets
+      - ~/LAIA/index
+    restricted:
+      - delete_files
+      - move_originals
+      - rename_originals
+
+  visual:
+    name: LAIA Visual
+    role: visual_generation_and_restoration
+    services:
+      - comfyui
+      - visual_packets
+      - visual_workflows
+    allowed_paths:
+      - services/visual
+      - ~/LAIA/packets/visual
+    restricted:
+      - unpacketed_generation
+      - overwriting_source_media
