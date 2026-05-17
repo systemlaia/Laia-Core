@@ -2653,6 +2653,14 @@ def search_all(args):
     prov_args.query = args.query
     provenance_search(prov_args)
 
+    print("=== Packet state matches ===")
+    class StateArgs:
+        pass
+
+    state_args = StateArgs()
+    state_args.query = args.query
+    search_packet_states(state_args)
+
 def provenance_log_dir():
     d = LAIA_ROOT / "logs" / "provenance"
     d.mkdir(parents=True, exist_ok=True)
@@ -3964,6 +3972,54 @@ def publish_states(_args=None):
 
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Published: {out}")
+
+
+def search_packet_states(args):
+    import json
+
+    query = " ".join(args.query).lower()
+
+    print(f"\nLAIA PACKET STATE SEARCH — {query}\n")
+
+    matches = []
+
+    for category, d in packet_categories().items():
+        if not d.exists():
+            continue
+
+        for packet in [p for p in d.iterdir() if p.is_dir()]:
+            state_path = packet / "packet-state.json"
+
+            if not state_path.exists():
+                continue
+
+            try:
+                data = json.loads(state_path.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                continue
+
+            text = json.dumps(data).lower()
+
+            if query in text:
+                matches.append({
+                    "category": category,
+                    "packet": packet.name,
+                    "state": data.get("state", "unknown"),
+                    "updated_at": data.get("updated_at", ""),
+                    "path": str(state_path),
+                })
+
+    if not matches:
+        print("No packet state matches found.\n")
+        return
+
+    for row in matches:
+        print(
+            f"- [{row['category']}] {row['packet']} "
+            f"| state={row['state']} "
+            f"| updated={row['updated_at']}"
+        )
+        print(f"  {row['path']}")
 
 def main():
     parser = argparse.ArgumentParser(prog="laia")
