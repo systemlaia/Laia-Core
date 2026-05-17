@@ -3760,6 +3760,8 @@ def visual_lifecycle(args):
 
     o = Obj()
     o.packet_name = args.packet_name
+    o.limit = getattr(args, "limit", 1)
+    o.force = getattr(args, "force", False)
 
     print("STEP 1 — Collect outputs")
     visual_collect(o)
@@ -3955,6 +3957,8 @@ def main():
 
     visual_lifecycle_p = visual_sub.add_parser("lifecycle")
     visual_lifecycle_p.add_argument("packet_name")
+    visual_lifecycle_p.add_argument("--limit", type=int, default=1)
+    visual_lifecycle_p.add_argument("--force", action="store_true")
     visual_lifecycle_p.set_defaults(func=visual_lifecycle)
 
     visual_submit_p = visual_sub.add_parser("submit")
