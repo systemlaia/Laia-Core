@@ -2899,6 +2899,99 @@ def librarian_summarize(_args=None):
     print("=== Registered nodes ===")
     nodes_list()
 
+
+def librarian_index(_args=None):
+    import json
+
+    print("\nLAIA LIBRARIAN INDEX\n")
+
+    out_dir = LAIA_ROOT / "index" / "librarian"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    packets = []
+    categories = packet_categories()
+
+    provenance = provenance_entries()
+
+    for category, d in categories.items():
+        if not d.exists():
+            continue
+
+        for packet in sorted(d.iterdir()):
+            if not packet.is_dir():
+                continue
+
+            readme = packet / "README.md"
+            packet_name = packet.name
+
+            related_provenance = [
+                row for row in provenance
+                if packet_name in str(row.get("packet", ""))
+            ]
+
+            files = sorted(
+                f.name for f in packet.iterdir()
+                if f.is_file()
+            )
+
+            packet_row = {
+                "category": category,
+                "name": packet_name,
+                "path": str(packet),
+                "files": files,
+                "has_readme": readme.exists(),
+                "provenance_count": len(related_provenance),
+                "provenance": related_provenance,
+                "modified": datetime.fromtimestamp(packet.stat().st_mtime).isoformat(),
+            }
+
+            packets.append(packet_row)
+
+    index = {
+        "generated": datetime.now().isoformat(),
+        "packet_count": len(packets),
+        "provenance_count": len(provenance),
+        "packets": packets,
+    }
+
+    json_path = out_dir / "librarian_index.json"
+    md_path = out_dir / "librarian_index.md"
+
+    json_path.write_text(
+        json.dumps(index, indent=2),
+        encoding="utf-8",
+    )
+
+    lines = [
+        "# LAIA Librarian Index",
+        "",
+        f"- Generated: `{index['generated']}`",
+        f"- Packets indexed: `{index['packet_count']}`",
+        f"- Provenance logs indexed: `{index['provenance_count']}`",
+        "",
+        "## Packet Relationship Summary",
+        "",
+        "| Category | Packet | Files | Provenance Logs |",
+        "|---|---|---:|---:|",
+    ]
+
+    for row in packets:
+        lines.append(
+            f"| `{row['category']}` | `{row['name']}` | "
+            f"{len(row['files'])} | {row['provenance_count']} |"
+        )
+
+    md_path.write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+    print(f"Packets indexed: {len(packets)}")
+    print(f"Provenance logs indexed: {len(provenance)}")
+    print(f"JSON: {json_path}")
+    print(f"MD:   {md_path}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3107,6 +3200,9 @@ def main():
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
+
+    librarian_index_p = librarian_sub.add_parser("index")
+    librarian_index_p.set_defaults(func=librarian_index)
 
     args = parser.parse_args()
 
