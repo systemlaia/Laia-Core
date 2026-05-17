@@ -2653,7 +2653,6 @@ def search_all(args):
     prov_args.query = args.query
     provenance_search(prov_args)
 
-
 def provenance_log_dir():
     d = LAIA_ROOT / "logs" / "provenance"
     d.mkdir(parents=True, exist_ok=True)
