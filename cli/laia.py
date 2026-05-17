@@ -2922,7 +2922,19 @@ def librarian_index(_args=None):
                 continue
 
             readme = packet / "README.md"
+            state_path = packet / "packet-state.json"
             packet_name = packet.name
+
+            packet_state = "unknown"
+            packet_state_updated = ""
+
+            if state_path.exists():
+                try:
+                    state_data = json.loads(state_path.read_text(encoding="utf-8", errors="replace"))
+                    packet_state = state_data.get("state", "unknown")
+                    packet_state_updated = state_data.get("updated_at", "")
+                except Exception:
+                    packet_state = "unreadable"
 
             related_provenance = [
                 row for row in provenance
@@ -2940,6 +2952,8 @@ def librarian_index(_args=None):
                 "path": str(packet),
                 "files": files,
                 "has_readme": readme.exists(),
+                "state": packet_state,
+                "state_updated": packet_state_updated,
                 "provenance_count": len(related_provenance),
                 "provenance": related_provenance,
                 "modified": datetime.fromtimestamp(packet.stat().st_mtime).isoformat(),
@@ -2971,13 +2985,13 @@ def librarian_index(_args=None):
         "",
         "## Packet Relationship Summary",
         "",
-        "| Category | Packet | Files | Provenance Logs |",
-        "|---|---|---:|---:|",
+        "| Category | Packet | State | Files | Provenance Logs |",
+        "|---|---|---|---:|---:|",
     ]
 
     for row in packets:
         lines.append(
-            f"| `{row['category']}` | `{row['name']}` | "
+            f"| `{row['category']}` | `{row['name']}` | `{row.get('state', 'unknown')}` | "
             f"{len(row['files'])} | {row['provenance_count']} |"
         )
 
