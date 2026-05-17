@@ -3751,6 +3751,46 @@ def publish_visual(_args=None):
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Published: {out}")
 
+
+def visual_lifecycle(args):
+    print("\nLAIA VISUAL LIFECYCLE\n")
+
+    class Obj:
+        pass
+
+    o = Obj()
+    o.packet_name = args.packet_name
+
+    print("STEP 1 — Collect outputs")
+    visual_collect(o)
+
+    print("STEP 2 — Inspect outputs")
+    visual_inspect(o)
+
+    print("STEP 3 — Create report")
+    visual_report(o)
+
+    print("STEP 4 — Rebuild librarian index")
+    librarian_index(None)
+
+    print("STEP 5 — Publish visual dashboard")
+    publish_visual(None)
+
+    print("STEP 6 — Publish operational dashboard")
+    publish_all(None)
+
+    prov = provenance_write(
+        service="visual",
+        action="lifecycle_completed",
+        packet=args.packet_name,
+        details={
+            "status": "success",
+        },
+    )
+
+    print(f"Lifecycle provenance: {prov}")
+    print("\nLifecycle complete.\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3912,6 +3952,10 @@ def main():
     visual_report_p = visual_sub.add_parser("report")
     visual_report_p.add_argument("packet_name")
     visual_report_p.set_defaults(func=visual_report)
+
+    visual_lifecycle_p = visual_sub.add_parser("lifecycle")
+    visual_lifecycle_p.add_argument("packet_name")
+    visual_lifecycle_p.set_defaults(func=visual_lifecycle)
 
     visual_submit_p = visual_sub.add_parser("submit")
     visual_submit_p.add_argument("packet_name")
