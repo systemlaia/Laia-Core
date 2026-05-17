@@ -2633,16 +2633,25 @@ def search_all(args):
     query = " ".join(args.query)
 
     print(f"\nLAIA SEARCH — {query}\n")
-    print("Packet matches:")
+
+    print("=== Packet matches ===")
     search_packets(args)
 
-    print("NAS matches:")
+    print("=== NAS matches ===")
     class NasArgs:
         pass
 
     nas_args = NasArgs()
     nas_args.query = args.query
     nas_find(nas_args)
+
+    print("=== Provenance matches ===")
+    class ProvenanceArgs:
+        pass
+
+    prov_args = ProvenanceArgs()
+    prov_args.query = args.query
+    provenance_search(prov_args)
 
 
 def provenance_log_dir():
