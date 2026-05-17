@@ -2441,16 +2441,23 @@ def visual_generate_submit(args):
 
     packet = find_packet("visual", args.packet_name)
 
-    print("\\nLAIA VISUAL GENERATE SUBMIT\\n")
+    print("\nLAIA VISUAL GENERATE SUBMIT\n")
 
     if not packet:
         print("Visual packet not found.\\n")
         return
 
-    workflow = visual_workflows_dir() / args.workflow
+    workflow_arg = Path(args.workflow).expanduser()
+
+    if workflow_arg.is_absolute():
+        workflow = workflow_arg
+    elif workflow_arg.exists():
+        workflow = workflow_arg.resolve()
+    else:
+        workflow = visual_workflows_dir() / args.workflow
 
     if not workflow.exists():
-        print(f"Missing workflow: {workflow}\\n")
+        print(f"Missing workflow: {workflow}\n")
         return
 
     submitted = packet / "workflow.submitted.json"
@@ -2473,7 +2480,7 @@ def visual_generate_submit(args):
     print("")
 
     if args.dry_run:
-        print("Dry run only. Workflow NOT submitted.\\n")
+        print("Dry run only. Workflow NOT submitted.\n")
         return
 
     result = subprocess.run(
@@ -2487,7 +2494,7 @@ def visual_generate_submit(args):
 
     if result.returncode != 0:
         print(result.stderr)
-        print("Generation submission failed.\\n")
+        print("Generation submission failed.\n")
         return
 
     generation_log = packet / "generation-result.txt"
