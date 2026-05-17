@@ -2461,7 +2461,30 @@ def visual_generate_submit(args):
         return
 
     submitted = packet / "workflow.submitted.json"
-    shutil.copy2(workflow, submitted)
+
+    # Inject packet prompts into known ComfyUI API workflow nodes.
+    # Node 6 = positive prompt, Node 7 = negative prompt for current API workflow.
+    workflow_data = json.loads(workflow.read_text(encoding="utf-8"))
+
+    positive_path = packet / "positive.txt"
+    negative_path = packet / "negative.txt"
+
+    if positive_path.exists() and "6" in workflow_data:
+        workflow_data["6"]["inputs"]["text"] = positive_path.read_text(
+            encoding="utf-8",
+            errors="replace",
+        ).strip()
+
+    if negative_path.exists() and "7" in workflow_data:
+        workflow_data["7"]["inputs"]["text"] = negative_path.read_text(
+            encoding="utf-8",
+            errors="replace",
+        ).strip()
+
+    submitted.write_text(
+        json.dumps(workflow_data, indent=2),
+        encoding="utf-8",
+    )
 
     print(f"Packet: {packet}")
     print(f"Workflow: {workflow}")
@@ -4068,6 +4091,127 @@ def search_packet_states(args):
         )
         print(f"  {row['path']}")
 
+
+def visual_caption(args):
+    import subprocess
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\nLAIA VISUAL CAPTION\n")
+
+    if not packet:
+        print("Packet not found.\n")
+        return
+
+    outputs_dir = packet / "outputs"
+
+    if not outputs_dir.exists():
+        print("No outputs directory found.\n")
+        return
+
+    files = sorted(
+        [f for f in outputs_dir.iterdir() if f.is_file()],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not files:
+        print("No output files found.\n")
+        return
+
+    image = files[0]
+
+    prompt = args.prompt or "Describe this image for an archival visual report."
+
+    cmd = [
+        "ollama",
+        "run",
+        args.model,
+        prompt,
+        str(image),
+    ]
+
+    print(f"Model: {args.model}")
+    print(f"Image: {image.name}")
+    print("Running caption model...\n")
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print("Caption generation failed.\n")
+        print(result.stderr)
+        return
+
+    caption = result.stdout.strip()
+
+    caption_json = packet / "visual-caption.json"
+    caption_md = packet / "visual-caption.md"
+
+    data = {
+        "packet": args.packet_name,
+        "image": str(image),
+        "model": args.model,
+        "prompt": prompt,
+        "caption": caption,
+        "created_at": datetime.now().isoformat(),
+    }
+
+    caption_json.write_text(
+        json.dumps(data, indent=2),
+        encoding="utf-8",
+    )
+
+    md = f"""# LAIA Visual Caption
+
+- Packet: `{args.packet_name}`
+- Image: `{image.name}`
+- Model: `{args.model}`
+- Generated: `{datetime.now().isoformat()}`
+
+## Prompt
+
+{prompt}
+
+## Caption
+
+{caption}
+"""
+
+    caption_md.write_text(md, encoding="utf-8")
+
+    packet_state_write(
+        packet,
+        "captioned",
+        service="visual",
+        details={
+            "caption_file": str(caption_md),
+            "model": args.model,
+        },
+    )
+
+    prov = provenance_write(
+        service="visual",
+        action="caption_created",
+        packet=args.packet_name,
+        details={
+            "image": str(image),
+            "caption_json": str(caption_json),
+            "caption_md": str(caption_md),
+            "model": args.model,
+        },
+    )
+
+    print(f"Caption JSON: {caption_json}")
+    print(f"Caption MD:   {caption_md}")
+    print(f"Provenance:   {prov}")
+    print("\nCaption:\n")
+    print(caption)
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4234,6 +4378,12 @@ def main():
     visual_outputs_p = visual_sub.add_parser("outputs")
     visual_outputs_p.add_argument("packet_name")
     visual_outputs_p.set_defaults(func=visual_outputs)
+
+    visual_caption_p = visual_sub.add_parser("caption")
+    visual_caption_p.add_argument("packet_name")
+    visual_caption_p.add_argument("--model", default="llava:latest")
+    visual_caption_p.add_argument("--prompt", default="")
+    visual_caption_p.set_defaults(func=visual_caption)
 
     visual_inspect_p = visual_sub.add_parser("inspect")
     visual_inspect_p.add_argument("packet_name")
