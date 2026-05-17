@@ -2848,6 +2848,57 @@ def nodes_capabilities(_args=None):
             print(f"- {service}")
         print("")
 
+
+def librarian_status(_args=None):
+    print("\nLAIA LIBRARIAN STATUS\n")
+
+    packet_index = LAIA_ROOT / "index" / "packets" / "packet_index.json"
+    provenance_dir = provenance_log_dir()
+    node_registry = node_registry_path()
+
+    packet_count = 0
+    provenance_count = 0
+    node_count = 0
+
+    if packet_index.exists():
+        try:
+            import json
+            rows = json.loads(packet_index.read_text())
+            packet_count = len(rows)
+        except Exception:
+            pass
+
+    if provenance_dir.exists():
+        provenance_count = len(list(provenance_dir.glob("*.json")))
+
+    if node_registry.exists():
+        try:
+            data = yaml.safe_load(node_registry.read_text()) or {}
+            node_count = len(data.get("nodes", {}))
+        except Exception:
+            pass
+
+    print(f"Packets indexed:    {packet_count}")
+    print(f"Provenance logs:   {provenance_count}")
+    print(f"Registered nodes:  {node_count}")
+    print("")
+
+
+def librarian_summarize(_args=None):
+    print("\nLAIA LIBRARIAN SUMMARY\n")
+
+    print("=== Recent packets ===")
+    packets_list()
+
+    print("=== Recent provenance ===")
+    class ProvArgs:
+        limit = 10
+
+    provenance_list(ProvArgs())
+
+    print("=== Registered nodes ===")
+    nodes_list()
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3046,6 +3097,16 @@ def main():
 
     nodes_cap_p = nodes_sub.add_parser("capabilities")
     nodes_cap_p.set_defaults(func=nodes_capabilities)
+
+
+    librarian_p = sub.add_parser("librarian")
+    librarian_sub = librarian_p.add_subparsers(dest="subcommand")
+
+    librarian_status_p = librarian_sub.add_parser("status")
+    librarian_status_p.set_defaults(func=librarian_status)
+
+    librarian_summary_p = librarian_sub.add_parser("summarize")
+    librarian_summary_p.set_defaults(func=librarian_summarize)
 
     args = parser.parse_args()
 
