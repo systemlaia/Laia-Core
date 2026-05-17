@@ -2992,6 +2992,109 @@ def librarian_index(_args=None):
     print(f"MD:   {md_path}")
     print("")
 
+
+def jobs_root():
+    return LAIA_ROOT / "jobs"
+
+
+def jobs_state_dir(state: str):
+    d = jobs_root() / state
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def jobs_create(args):
+    title = " ".join(args.title).strip()
+    slug = slugify(title)[:60]
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    job_id = f"{stamp}-{slug}"
+
+    packet = getattr(args, "packet", "") or ""
+    service = getattr(args, "service", "planner")
+
+    target = jobs_state_dir("queued") / f"{job_id}.md"
+
+    content = f"""---
+id: {job_id}
+type: laia_job
+state: queued
+service: {service}
+packet: {packet}
+created_at: {datetime.now().isoformat()}
+requires_approval: true
+---
+
+# {title}
+
+## Goal
+{title}
+
+## Packet Reference
+{packet or "None"}
+
+## Status
+Queued. Planner proposes; Operator approves.
+
+## Notes
+"""
+
+    target.write_text(content, encoding="utf-8")
+
+    provenance_write(
+        service="planner",
+        action="job_created",
+        packet=packet,
+        details={
+            "job_id": job_id,
+            "job_path": str(target),
+            "service": service,
+            "title": title,
+        },
+    )
+
+    print("\nLAIA JOB CREATED\n")
+    print(f"Job ID: {job_id}")
+    print(f"Path: {target}\n")
+
+
+def jobs_list(_args=None):
+    print("\nLAIA JOBS\n")
+
+    states = ["queued", "approved", "running", "completed", "failed"]
+
+    for state in states:
+        d = jobs_state_dir(state)
+        jobs = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        print(f"## {state}")
+        if not jobs:
+            print("- none\n")
+            continue
+
+        for job in jobs[:10]:
+            print(f"- {job.stem}")
+        print("")
+
+
+def jobs_find(job_id: str):
+    for state in ["queued", "approved", "running", "completed", "failed"]:
+        p = jobs_state_dir(state) / f"{job_id}.md"
+        if p.exists():
+            return p
+    return None
+
+
+def jobs_show(args):
+    job = jobs_find(args.job_id)
+
+    print(f"\nLAIA JOB — {args.job_id}\n")
+
+    if not job:
+        print("Job not found. Use: laia jobs list\n")
+        return
+
+    print(job.read_text(encoding="utf-8", errors="replace"))
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3203,6 +3306,23 @@ def main():
 
     librarian_index_p = librarian_sub.add_parser("index")
     librarian_index_p.set_defaults(func=librarian_index)
+
+
+    jobs_p = sub.add_parser("jobs")
+    jobs_sub = jobs_p.add_subparsers(dest="subcommand")
+
+    jobs_create_p = jobs_sub.add_parser("create")
+    jobs_create_p.add_argument("title", nargs="+")
+    jobs_create_p.add_argument("--packet", default="")
+    jobs_create_p.add_argument("--service", default="planner")
+    jobs_create_p.set_defaults(func=jobs_create)
+
+    jobs_list_p = jobs_sub.add_parser("list")
+    jobs_list_p.set_defaults(func=jobs_list)
+
+    jobs_show_p = jobs_sub.add_parser("show")
+    jobs_show_p.add_argument("job_id")
+    jobs_show_p.set_defaults(func=jobs_show)
 
     args = parser.parse_args()
 
