@@ -1975,20 +1975,41 @@ def nas_retrieval_packets_dir():
 
 
 def packets_list(_args=None):
-    d = nas_retrieval_packets_dir()
     print("\nLAIA PACKETS\n")
-    if not d.exists():
-        print(f"Missing packet directory: {d}\n")
-        return
 
-    packets = sorted([p for p in d.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
-    if not packets:
+    categories = {
+        "nas_retrieval": packets_dir() / "nas_retrieval",
+        "visual": packets_dir() / "visual",
+    }
+
+    found_any = False
+
+    for label, d in categories.items():
+        print(f"## {label}")
+
+        if not d.exists():
+            print(f"- Missing: {d}\n")
+            continue
+
+        packets = sorted(
+            [p for p in d.iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+
+        if not packets:
+            print("- No packets found.\n")
+            continue
+
+        found_any = True
+
+        for packet in packets[:10]:
+            print(f"- {packet.name}")
+
+        print("")
+
+    if not found_any:
         print("No packets found.\n")
-        return
-
-    for p in packets[:20]:
-        print(f"- {p.name}")
-    print("")
 
 
 def packets_latest(_args=None):
