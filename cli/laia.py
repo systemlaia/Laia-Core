@@ -3407,13 +3407,32 @@ def visual_collect(args):
             "modified": datetime.fromtimestamp(dst.stat().st_mtime).isoformat(),
         })
 
+    present_files = sorted(
+        [f for f in collected_dir.iterdir() if f.is_file()],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    present = [
+        {
+            "path": str(f),
+            "filename": f.name,
+            "bytes": f.stat().st_size,
+            "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+        }
+        for f in present_files
+    ]
+
     manifest_path = packet / "visual-output-manifest.json"
     manifest = {
         "packet": args.packet_name,
         "collected_at": datetime.now().isoformat(),
         "source_dir": str(source_dir),
         "outputs_dir": str(collected_dir),
-        "files_collected": copied,
+        "files_copied": copied,
+        "files_present": present,
+        "copied_count": len(copied),
+        "present_count": len(present),
     }
 
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -3426,7 +3445,8 @@ def visual_collect(args):
             "source_dir": str(source_dir),
             "outputs_dir": str(collected_dir),
             "manifest": str(manifest_path),
-            "count": len(copied),
+            "copied_count": len(copied),
+            "present_count": len(present),
         },
     )
 
@@ -3434,6 +3454,7 @@ def visual_collect(args):
     print(f"Source: {source_dir}")
     print(f"Collected dir: {collected_dir}")
     print(f"Files copied: {len(copied)}")
+    print(f"Files present: {len(present)}")
     print(f"Manifest: {manifest_path}")
     print(f"Provenance: {provenance}\n")
 
