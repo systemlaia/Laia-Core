@@ -2083,6 +2083,62 @@ Created: {datetime.now().isoformat()}
     print(f"Matches: {len(matches)}")
     print("")
 
+
+def visual_profiles_dir():
+    return REPO_ROOT / "services" / "visual" / "profiles"
+
+
+def visual_status(_args=None):
+    import urllib.request
+
+    print("\nLAIA VISUAL STATUS\n")
+
+    url = "http://127.0.0.1:8188"
+
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            print(f"ComfyUI reachable: PASS ({url})")
+            print(f"HTTP status: {r.status}")
+    except Exception as e:
+        print(f"ComfyUI reachable: FAIL ({url})")
+        print(f"Error: {e}")
+
+    print("")
+
+
+def visual_profiles(_args=None):
+    d = visual_profiles_dir()
+
+    print("\nLAIA VISUAL PROFILES\n")
+
+    if not d.exists():
+        print(f"Missing profiles dir: {d}\n")
+        return
+
+    profiles = sorted(d.glob("*.yaml"))
+
+    if not profiles:
+        print("No visual profiles found.\n")
+        return
+
+    for p in profiles:
+        print(f"- {p.stem}")
+
+    print("")
+
+
+def visual_profile(args):
+    p = visual_profiles_dir() / f"{args.name}.yaml"
+
+    print(f"\nLAIA VISUAL PROFILE — {args.name}\n")
+
+    if not p.exists():
+        print(f"Missing profile: {p}\n")
+        return
+
+    print(p.read_text(encoding="utf-8", errors="replace"))
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2187,6 +2243,20 @@ def main():
 
     packets_list_p = packets_sub.add_parser("list")
     packets_list_p.set_defaults(func=packets_list)
+
+
+    visual_p = sub.add_parser("visual")
+    visual_sub = visual_p.add_subparsers(dest="subcommand")
+
+    visual_status_p = visual_sub.add_parser("status")
+    visual_status_p.set_defaults(func=visual_status)
+
+    visual_profiles_p = visual_sub.add_parser("profiles")
+    visual_profiles_p.set_defaults(func=visual_profiles)
+
+    visual_profile_p = visual_sub.add_parser("profile")
+    visual_profile_p.add_argument("name")
+    visual_profile_p.set_defaults(func=visual_profile)
 
     args = parser.parse_args()
 
