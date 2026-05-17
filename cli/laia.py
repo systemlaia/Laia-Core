@@ -3095,6 +3095,56 @@ def jobs_show(args):
 
     print(job.read_text(encoding="utf-8", errors="replace"))
 
+
+def jobs_move_state(args, target_state: str):
+    import shutil
+
+    job = jobs_find(args.job_id)
+
+    print(f"\nLAIA JOB {target_state.upper()}\n")
+
+    if not job:
+        print("Job not found. Use: laia jobs list\n")
+        return
+
+    new_path = jobs_state_dir(target_state) / job.name
+    shutil.move(str(job), str(new_path))
+
+    text = new_path.read_text(encoding="utf-8", errors="replace")
+    text = text.replace("state: queued", f"state: {target_state}")
+    text = text.replace("state: approved", f"state: {target_state}")
+    text = text.replace("state: running", f"state: {target_state}")
+    text = text.replace("state: completed", f"state: {target_state}")
+    text = text.replace("state: failed", f"state: {target_state}")
+
+    text += f"\n\n## State Change\nMoved to `{target_state}` at {datetime.now().isoformat()}.\n"
+    new_path.write_text(text, encoding="utf-8")
+
+    packet = ""
+    for line in text.splitlines():
+        if line.startswith("packet:"):
+            packet = line.split(":", 1)[1].strip()
+            break
+
+    provenance_write(
+        service="planner",
+        action=f"job_{target_state}",
+        packet=packet,
+        details={
+            "job_id": args.job_id,
+            "job_path": str(new_path),
+            "state": target_state,
+        },
+    )
+
+    print(f"Job ID: {args.job_id}")
+    print(f"State: {target_state}")
+    print(f"Path: {new_path}\n")
+
+
+def jobs_approve(args):
+    jobs_move_state(args, "approved")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3323,6 +3373,10 @@ def main():
     jobs_show_p = jobs_sub.add_parser("show")
     jobs_show_p.add_argument("job_id")
     jobs_show_p.set_defaults(func=jobs_show)
+
+    jobs_approve_p = jobs_sub.add_parser("approve")
+    jobs_approve_p.add_argument("job_id")
+    jobs_approve_p.set_defaults(func=jobs_approve)
 
     args = parser.parse_args()
 
