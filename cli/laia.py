@@ -3145,6 +3145,10 @@ def jobs_move_state(args, target_state: str):
 def jobs_approve(args):
     jobs_move_state(args, "approved")
 
+
+def jobs_complete(args):
+    jobs_move_state(args, "completed")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3377,6 +3381,10 @@ def main():
     jobs_approve_p = jobs_sub.add_parser("approve")
     jobs_approve_p.add_argument("job_id")
     jobs_approve_p.set_defaults(func=jobs_approve)
+
+    jobs_complete_p = jobs_sub.add_parser("complete")
+    jobs_complete_p.add_argument("job_id")
+    jobs_complete_p.set_defaults(func=jobs_complete)
 
     args = parser.parse_args()
 
