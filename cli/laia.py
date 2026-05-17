@@ -2139,6 +2139,49 @@ def visual_profile(args):
     print(p.read_text(encoding="utf-8", errors="replace"))
     print("")
 
+
+def visual_run(args):
+    profile_path = visual_profiles_dir() / f"{args.profile}.yaml"
+
+    print(f"\nLAIA VISUAL RUN — {args.profile}\n")
+
+    if not profile_path.exists():
+        print(f"Missing profile: {profile_path}\n")
+        return
+
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+
+    prompt = " ".join(args.prompt) if getattr(args, "prompt", None) else ""
+
+    print("Mode: DRY RUN" if args.dry_run else "Mode: LIVE RUN")
+    print("")
+    print(f"Profile: {profile.get('name', args.profile)}")
+    print(f"Description: {profile.get('description', '')}")
+    print(f"Checkpoint: {profile.get('checkpoint', '')}")
+    print("")
+    print("Positive prompt:")
+    for item in profile.get("positive", []):
+        print(f"- {item}")
+    if prompt:
+        print(f"- {prompt}")
+
+    print("")
+    print("Negative prompt:")
+    for item in profile.get("negative", []):
+        print(f"- {item}")
+
+    outputs = profile.get("outputs", {})
+    print("")
+    print("Output:")
+    print(f"- Folder: {outputs.get('folder', 'services/visual/outputs')}")
+    print(f"- Prefix: {outputs.get('prefix', 'laia_visual')}")
+
+    if args.dry_run:
+        print("\nNo image generated. Dry run only.\n")
+        return
+
+    print("\nLIVE RUN is not enabled yet. Add workflow execution after dry-run validation.\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2257,6 +2300,12 @@ def main():
     visual_profile_p = visual_sub.add_parser("profile")
     visual_profile_p.add_argument("name")
     visual_profile_p.set_defaults(func=visual_profile)
+
+    visual_run_p = visual_sub.add_parser("run")
+    visual_run_p.add_argument("profile")
+    visual_run_p.add_argument("prompt", nargs="*")
+    visual_run_p.add_argument("--dry-run", action="store_true")
+    visual_run_p.set_defaults(func=visual_run)
 
     args = parser.parse_args()
 
