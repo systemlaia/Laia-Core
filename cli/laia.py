@@ -2623,6 +2623,59 @@ def search_all(args):
     nas_args.query = args.query
     nas_find(nas_args)
 
+
+def provenance_log_dir():
+    d = LAIA_ROOT / "logs" / "provenance"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def provenance_write(
+    service: str,
+    action: str,
+    packet: str = "",
+    details: dict | None = None,
+):
+    import json
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    row = {
+        "timestamp": datetime.now().isoformat(),
+        "service": service,
+        "action": action,
+        "packet": packet,
+        "details": details or {},
+    }
+
+    out = provenance_log_dir() / f"{stamp}-{service}-{action}.json"
+
+    out.write_text(
+        json.dumps(row, indent=2),
+        encoding="utf-8",
+    )
+
+    return out
+
+
+def provenance_log(args):
+    details = {}
+
+    for item in args.detail:
+        if "=" in item:
+            k, v = item.split("=", 1)
+            details[k] = v
+
+    out = provenance_write(
+        service=args.service,
+        action=args.action,
+        packet=args.packet,
+        details=details,
+    )
+
+    print("\nLAIA PROVENANCE LOG\n")
+    print(f"Log written: {out}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2784,6 +2837,17 @@ def main():
     search_all_p = search_sub.add_parser("all")
     search_all_p.add_argument("query", nargs="+")
     search_all_p.set_defaults(func=search_all)
+
+
+    provenance_p = sub.add_parser("provenance")
+    provenance_sub = provenance_p.add_subparsers(dest="subcommand")
+
+    provenance_log_p = provenance_sub.add_parser("log")
+    provenance_log_p.add_argument("service")
+    provenance_log_p.add_argument("action")
+    provenance_log_p.add_argument("--packet", default="")
+    provenance_log_p.add_argument("--detail", nargs="*", default=[])
+    provenance_log_p.set_defaults(func=provenance_log)
 
     args = parser.parse_args()
 
