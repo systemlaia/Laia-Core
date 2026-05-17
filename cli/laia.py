@@ -3781,17 +3781,133 @@ def visual_lifecycle(args):
     print("STEP 6 — Publish operational dashboard")
     publish_all(None)
 
+    packet = find_packet("visual", args.packet_name)
+    state_file = None
+    if packet:
+        state_file = packet_state_write(
+            packet,
+            "lifecycle_completed",
+            service="visual",
+            details={"workflow": "visual_lifecycle"},
+        )
+
     prov = provenance_write(
         service="visual",
         action="lifecycle_completed",
         packet=args.packet_name,
         details={
             "status": "success",
+            "state_file": str(state_file) if state_file else "",
         },
     )
 
     print(f"Lifecycle provenance: {prov}")
     print("\nLifecycle complete.\n")
+
+
+PACKET_STATES = [
+    "created",
+    "submitted",
+    "generated",
+    "collected",
+    "inspected",
+    "reported",
+    "published",
+    "lifecycle_completed",
+]
+
+
+def packet_state_write(packet_path: Path, state: str, service: str = "packet", details: dict | None = None):
+    import json
+
+    state_path = packet_path / "packet-state.json"
+
+    old = {}
+    if state_path.exists():
+        try:
+            old = json.loads(state_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            old = {}
+
+    history = old.get("history", [])
+    event = {
+        "timestamp": datetime.now().isoformat(),
+        "state": state,
+        "service": service,
+        "details": details or {},
+    }
+    history.append(event)
+
+    data = {
+        "packet": packet_path.name,
+        "path": str(packet_path),
+        "state": state,
+        "updated_at": event["timestamp"],
+        "history": history,
+    }
+
+    state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return state_path
+
+
+def packets_state(args):
+    packet = find_packet(args.category, args.packet_name)
+
+    print("\nLAIA PACKET STATE\n")
+
+    if not packet:
+        print("Packet not found. Use: laia packets list\n")
+        return
+
+    if args.state not in PACKET_STATES:
+        print("Unknown state.")
+        print("Allowed:")
+        for state in PACKET_STATES:
+            print(f"- {state}")
+        print("")
+        return
+
+    state_path = packet_state_write(
+        packet,
+        args.state,
+        service=args.service,
+        details={"note": args.note or ""},
+    )
+
+    prov = provenance_write(
+        service="packet",
+        action="state_changed",
+        packet=packet.name,
+        details={
+            "state": args.state,
+            "state_file": str(state_path),
+            "service": args.service,
+            "note": args.note or "",
+        },
+    )
+
+    print(f"Packet: {packet}")
+    print(f"State: {args.state}")
+    print(f"State file: {state_path}")
+    print(f"Provenance: {prov}\n")
+
+
+def packets_state_show(args):
+    packet = find_packet(args.category, args.packet_name)
+
+    print("\nLAIA PACKET STATE SHOW\n")
+
+    if not packet:
+        print("Packet not found. Use: laia packets list\n")
+        return
+
+    state_path = packet / "packet-state.json"
+
+    if not state_path.exists():
+        print("No packet-state.json found.\n")
+        return
+
+    print(state_path.read_text(encoding="utf-8", errors="replace"))
 
 def main():
     parser = argparse.ArgumentParser(prog="laia")
@@ -3906,6 +4022,19 @@ def main():
 
     packets_index_p = packets_sub.add_parser("index")
     packets_index_p.set_defaults(func=packets_index)
+
+    packets_state_p = packets_sub.add_parser("state")
+    packets_state_p.add_argument("category")
+    packets_state_p.add_argument("packet_name")
+    packets_state_p.add_argument("state")
+    packets_state_p.add_argument("--service", default="operator")
+    packets_state_p.add_argument("--note", default="")
+    packets_state_p.set_defaults(func=packets_state)
+
+    packets_state_show_p = packets_sub.add_parser("state-show")
+    packets_state_show_p.add_argument("category")
+    packets_state_show_p.add_argument("packet_name")
+    packets_state_show_p.set_defaults(func=packets_state_show)
 
 
     visual_p = sub.add_parser("visual")
