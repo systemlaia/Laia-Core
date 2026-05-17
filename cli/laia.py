@@ -3149,6 +3149,106 @@ def jobs_approve(args):
 def jobs_complete(args):
     jobs_move_state(args, "completed")
 
+
+def publish_dir():
+    d = LAIA_ROOT / "LAIA" / "00_DASHBOARD"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def publish_status(_args=None):
+    out = publish_dir() / "LAIA_STATUS.md"
+
+    lines = [
+        "# LAIA Status",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## System Summary",
+        "",
+    ]
+
+    packet_index = LAIA_ROOT / "index" / "packets" / "packet_index.json"
+    librarian_index = LAIA_ROOT / "index" / "librarian" / "librarian_index.md"
+
+    lines.append(f"- Packet index: `{'PASS' if packet_index.exists() else 'MISSING'}`")
+    lines.append(f"- Librarian index: `{'PASS' if librarian_index.exists() else 'MISSING'}`")
+    lines.append(f"- Provenance logs: `{len(list(provenance_log_dir().glob('*.json')))}`")
+    lines.append(f"- Jobs queued: `{len(list(jobs_state_dir('queued').glob('*.md')))}`")
+    lines.append(f"- Jobs approved: `{len(list(jobs_state_dir('approved').glob('*.md')))}`")
+    lines.append(f"- Jobs completed: `{len(list(jobs_state_dir('completed').glob('*.md')))}`")
+    lines.append("")
+
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Published: {out}")
+
+
+def publish_packets(_args=None):
+    out = publish_dir() / "PACKET_INDEX.md"
+    src = LAIA_ROOT / "index" / "packets" / "packet_index.md"
+
+    if src.exists():
+        out.write_text(src.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    else:
+        out.write_text("# Packet Index\n\nMissing packet index. Run `laia packets index`.\n", encoding="utf-8")
+
+    print(f"Published: {out}")
+
+
+def publish_provenance(_args=None):
+    out = publish_dir() / "PROVENANCE_RECENT.md"
+
+    lines = [
+        "# Recent Provenance",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+    ]
+
+    for row in provenance_entries()[:25]:
+        lines.append(f"- `{row.get('timestamp')}` — **{row.get('service')}:{row.get('action')}**")
+        if row.get("packet"):
+            lines.append(f"  - Packet: `{row.get('packet')}`")
+        lines.append(f"  - File: `{row.get('_file')}`")
+
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Published: {out}")
+
+
+def publish_jobs(_args=None):
+    out = publish_dir() / "JOBS.md"
+
+    lines = [
+        "# LAIA Jobs",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+    ]
+
+    for state in ["queued", "approved", "running", "completed", "failed"]:
+        lines.append(f"## {state}")
+        jobs = sorted(
+            jobs_state_dir(state).glob("*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not jobs:
+            lines.append("- none")
+        else:
+            for job in jobs[:20]:
+                lines.append(f"- `{job.stem}`")
+        lines.append("")
+
+    out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Published: {out}")
+
+
+def publish_all(args=None):
+    publish_status(args)
+    publish_packets(args)
+    publish_provenance(args)
+    publish_jobs(args)
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -3385,6 +3485,25 @@ def main():
     jobs_complete_p = jobs_sub.add_parser("complete")
     jobs_complete_p.add_argument("job_id")
     jobs_complete_p.set_defaults(func=jobs_complete)
+
+
+    publish_p = sub.add_parser("publish")
+    publish_sub = publish_p.add_subparsers(dest="subcommand")
+
+    publish_status_p = publish_sub.add_parser("status")
+    publish_status_p.set_defaults(func=publish_status)
+
+    publish_packets_p = publish_sub.add_parser("packets")
+    publish_packets_p.set_defaults(func=publish_packets)
+
+    publish_provenance_p = publish_sub.add_parser("provenance")
+    publish_provenance_p.set_defaults(func=publish_provenance)
+
+    publish_jobs_p = publish_sub.add_parser("jobs")
+    publish_jobs_p.set_defaults(func=publish_jobs)
+
+    publish_all_p = publish_sub.add_parser("all")
+    publish_all_p.set_defaults(func=publish_all)
 
     args = parser.parse_args()
 
