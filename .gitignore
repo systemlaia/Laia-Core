@@ -50,3 +50,8 @@ scripts/laia_manifest/catalog_search.py
 archive/nas_manifests/*.csv
 archive/nas_manifests/*.json
 archive/nas_manifests/*.md
+
+# Allow LAIA OpenClaw service architecture
+!services/
+!services/openclaw/
+!services/openclaw/**

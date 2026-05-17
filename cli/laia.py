@@ -1965,6 +1965,124 @@ def nas_find(args):
     print(f"Missing latest manifest JSON: {js}")
     print(f"Missing latest manifest Markdown: {md}\n")
 
+
+def packets_dir():
+    return LAIA_ROOT / "packets"
+
+
+def nas_retrieval_packets_dir():
+    return packets_dir() / "nas_retrieval"
+
+
+def packets_list(_args=None):
+    d = nas_retrieval_packets_dir()
+    print("\nLAIA PACKETS\n")
+    if not d.exists():
+        print(f"Missing packet directory: {d}\n")
+        return
+
+    packets = sorted([p for p in d.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+    if not packets:
+        print("No packets found.\n")
+        return
+
+    for p in packets[:20]:
+        print(f"- {p.name}")
+    print("")
+
+
+def packets_latest(_args=None):
+    d = nas_retrieval_packets_dir()
+    print("\nLAIA LATEST PACKET\n")
+    if not d.exists():
+        print(f"Missing packet directory: {d}\n")
+        return
+
+    packets = sorted([p for p in d.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+    if not packets:
+        print("No packets found.\n")
+        return
+
+    latest = packets[0]
+    print(latest)
+    readme = latest / "README.md"
+    if readme.exists():
+        print("")
+        print(readme.read_text(encoding="utf-8", errors="replace"))
+    print("")
+
+
+def packets_create(args):
+    import json
+
+    kind = args.kind
+    query = " ".join(args.query)
+    slug = slugify(query)[:60]
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    target = nas_retrieval_packets_dir() / f"{stamp}-{slug}"
+    target.mkdir(parents=True, exist_ok=False)
+
+    manifest_json = nas_manifest_dir() / "nas_manifest_latest.json"
+    matches = []
+
+    if kind == "nas-search" and manifest_json.exists():
+        rows = json.loads(manifest_json.read_text(encoding="utf-8", errors="replace"))
+        q = query.lower()
+        for row in rows:
+            haystack = " ".join([
+                str(row.get("path", "")),
+                str(row.get("relative_path", "")),
+                str(row.get("filename", "")),
+                str(row.get("extension", "")),
+                str(row.get("top_level_dir", "")),
+            ]).lower()
+            if q in haystack:
+                matches.append(row)
+
+    (target / "query.txt").write_text(query + "\n", encoding="utf-8")
+
+    results_lines = []
+    for row in matches[:200]:
+        results_lines.append(
+            f"{row.get('relative_path', row.get('path', ''))} | "
+            f"{row.get('size_bytes', '')} bytes | "
+            f"modified {row.get('modified_time', '')}"
+        )
+    (target / "results.txt").write_text("\n".join(results_lines) + ("\n" if results_lines else ""), encoding="utf-8")
+
+    (target / "manifest_excerpt.json").write_text(
+        json.dumps(matches[:200], indent=2),
+        encoding="utf-8"
+    )
+
+    readme = f"""# LAIA Retrieval Packet
+
+Type: {kind}
+Query: {query}
+Created: {datetime.now().isoformat()}
+
+## Source Artifact
+
+- Manifest JSON: {manifest_json}
+
+## Results
+
+- Matches captured: {len(matches)}
+- Results stored: {min(len(matches), 200)}
+
+## Rules
+
+- Originals are sacred.
+- This packet is read-only evidence.
+- Any copy/move/rename requires explicit approval.
+"""
+    (target / "README.md").write_text(readme, encoding="utf-8")
+    (target / "notes.md").write_text("# Notes\n\n", encoding="utf-8")
+
+    print(f"Created packet: {target}")
+    print(f"Matches: {len(matches)}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2054,6 +2172,21 @@ def main():
     nas_find_p = nas_sub.add_parser("find")
     nas_find_p.add_argument("query", nargs="+")
     nas_find_p.set_defaults(func=nas_find)
+
+
+    packets_p = sub.add_parser("packets")
+    packets_sub = packets_p.add_subparsers(dest="subcommand")
+
+    packets_create_p = packets_sub.add_parser("create")
+    packets_create_p.add_argument("kind")
+    packets_create_p.add_argument("query", nargs="+")
+    packets_create_p.set_defaults(func=packets_create)
+
+    packets_latest_p = packets_sub.add_parser("latest")
+    packets_latest_p.set_defaults(func=packets_latest)
+
+    packets_list_p = packets_sub.add_parser("list")
+    packets_list_p.set_defaults(func=packets_list)
 
     args = parser.parse_args()
 
