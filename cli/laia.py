@@ -2429,6 +2429,148 @@ def visual_generate(args):
     print("\nLIVE GENERATION IS NOT ENABLED YET.")
     print("Next step: wire this to services/visual/comfy_client.py after approval.\n")
 
+
+def visual_workflows_dir():
+    return REPO_ROOT / "services" / "visual" / "ComfyUI" / "blueprints"
+
+
+def visual_generate_submit(args):
+    import json
+    import shutil
+    import subprocess
+
+    packet = find_packet("visual", args.packet_name)
+
+    print("\\nLAIA VISUAL GENERATE SUBMIT\\n")
+
+    if not packet:
+        print("Visual packet not found.\\n")
+        return
+
+    workflow = visual_workflows_dir() / args.workflow
+
+    if not workflow.exists():
+        print(f"Missing workflow: {workflow}\\n")
+        return
+
+    submitted = packet / "workflow.submitted.json"
+    shutil.copy2(workflow, submitted)
+
+    print(f"Packet: {packet}")
+    print(f"Workflow: {workflow}")
+    print(f"Copied workflow -> {submitted}")
+    print("")
+
+    cmd = [
+        "python",
+        "services/visual/comfy_client.py",
+        "queue",
+        str(submitted),
+    ]
+
+    print("Queue command:")
+    print(" ".join(cmd))
+    print("")
+
+    if args.dry_run:
+        print("Dry run only. Workflow NOT submitted.\\n")
+        return
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    print(result.stdout)
+
+    if result.returncode != 0:
+        print(result.stderr)
+        print("Generation submission failed.\\n")
+        return
+
+    generation_log = packet / "generation-result.txt"
+    generation_log.write_text(
+        result.stdout,
+        encoding="utf-8",
+    )
+
+    print(f"Saved generation log: {generation_log}")
+    print("")
+
+
+def packets_index(args=None):
+    import json
+
+    print("\nLAIA PACKET INDEX\n")
+
+    index_dir = LAIA_ROOT / "index" / "packets"
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+
+    categories = packet_categories()
+
+    for category, d in categories.items():
+        if not d.exists():
+            continue
+
+        for packet in sorted(d.iterdir()):
+            if not packet.is_dir():
+                continue
+
+            readme = packet / "README.md"
+            prompt = packet / "prompt.txt"
+            query = packet / "query.txt"
+
+            title = packet.name
+            summary = ""
+
+            if readme.exists():
+                text = readme.read_text(encoding="utf-8", errors="replace")
+                summary = "\n".join(text.splitlines()[:20])
+
+            row = {
+                "category": category,
+                "name": packet.name,
+                "path": str(packet),
+                "created_or_modified": datetime.fromtimestamp(packet.stat().st_mtime).isoformat(),
+                "has_readme": readme.exists(),
+                "has_prompt": prompt.exists(),
+                "has_query": query.exists(),
+                "summary": summary,
+            }
+
+            rows.append(row)
+
+    json_path = index_dir / "packet_index.json"
+    md_path = index_dir / "packet_index.md"
+
+    json_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+    lines = [
+        "# LAIA Packet Index",
+        "",
+        f"- Packets indexed: {len(rows)}",
+        f"- Generated: {datetime.now().isoformat()}",
+        "",
+        "| Category | Packet | Path |",
+        "|---|---|---|",
+    ]
+
+    for row in rows:
+        lines.append(
+            f"| `{row['category']}` | `{row['name']}` | `{row['path']}` |"
+        )
+
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    print(f"Indexed packets: {len(rows)}")
+    print(f"JSON: {json_path}")
+    print(f"MD:   {md_path}")
+    print("")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2540,6 +2682,9 @@ def main():
     packets_list_p = packets_sub.add_parser("list")
     packets_list_p.set_defaults(func=packets_list)
 
+    packets_index_p = packets_sub.add_parser("index")
+    packets_index_p.set_defaults(func=packets_index)
+
 
     visual_p = sub.add_parser("visual")
     visual_sub = visual_p.add_subparsers(dest="subcommand")
@@ -2569,6 +2714,12 @@ def main():
     visual_generate_p.add_argument("packet_name")
     visual_generate_p.add_argument("--dry-run", action="store_true")
     visual_generate_p.set_defaults(func=visual_generate)
+
+    visual_submit_p = visual_sub.add_parser("submit")
+    visual_submit_p.add_argument("packet_name")
+    visual_submit_p.add_argument("workflow")
+    visual_submit_p.add_argument("--dry-run", action="store_true")
+    visual_submit_p.set_defaults(func=visual_generate_submit)
 
     args = parser.parse_args()
 
