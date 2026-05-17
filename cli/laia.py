@@ -3496,7 +3496,8 @@ def visual_outputs(args):
         data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
         print(f"- collected_at: {data.get('collected_at')}")
         print(f"- source_dir: {data.get('source_dir')}")
-        print(f"- count: {len(data.get('files_collected', []))}")
+        print(f"- copied_count: {data.get('copied_count', len(data.get('files_copied', [])))}")
+        print(f"- present_count: {data.get('present_count', len(data.get('files_present', [])))}")
 
     print("")
 
