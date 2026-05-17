@@ -2011,7 +2011,6 @@ def packets_list(_args=None):
     if not found_any:
         print("No packets found.\n")
 
-
 def packets_latest(_args=None):
     d = nas_retrieval_packets_dir()
     print("\nLAIA LATEST PACKET\n")
