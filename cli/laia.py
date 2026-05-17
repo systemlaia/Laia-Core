@@ -2571,6 +2571,58 @@ def packets_index(args=None):
     print(f"MD:   {md_path}")
     print("")
 
+
+def search_packets(args):
+    import json
+
+    query = " ".join(args.query).lower()
+    index_path = LAIA_ROOT / "index" / "packets" / "packet_index.json"
+
+    print(f"\nLAIA SEARCH PACKETS — {query}\n")
+
+    if not index_path.exists():
+        print("Missing packet index. Run: laia packets index\n")
+        return
+
+    rows = json.loads(index_path.read_text(encoding="utf-8", errors="replace"))
+    matches = []
+
+    for row in rows:
+        haystack = " ".join([
+            str(row.get("category", "")),
+            str(row.get("name", "")),
+            str(row.get("path", "")),
+            str(row.get("summary", "")),
+        ]).lower()
+
+        if query in haystack:
+            matches.append(row)
+
+    if not matches:
+        print("No packet matches found.\n")
+        return
+
+    for row in matches[:20]:
+        print(f"- [{row.get('category')}] {row.get('name')}")
+        print(f"  {row.get('path')}")
+    print("")
+
+
+def search_all(args):
+    query = " ".join(args.query)
+
+    print(f"\nLAIA SEARCH — {query}\n")
+    print("Packet matches:")
+    search_packets(args)
+
+    print("NAS matches:")
+    class NasArgs:
+        pass
+
+    nas_args = NasArgs()
+    nas_args.query = args.query
+    nas_find(nas_args)
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -2720,6 +2772,18 @@ def main():
     visual_submit_p.add_argument("workflow")
     visual_submit_p.add_argument("--dry-run", action="store_true")
     visual_submit_p.set_defaults(func=visual_generate_submit)
+
+
+    search_p = sub.add_parser("search")
+    search_sub = search_p.add_subparsers(dest="subcommand")
+
+    search_packets_p = search_sub.add_parser("packets")
+    search_packets_p.add_argument("query", nargs="+")
+    search_packets_p.set_defaults(func=search_packets)
+
+    search_all_p = search_sub.add_parser("all")
+    search_all_p.add_argument("query", nargs="+")
+    search_all_p.set_defaults(func=search_all)
 
     args = parser.parse_args()
 
