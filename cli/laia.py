@@ -2496,7 +2496,21 @@ def visual_generate_submit(args):
         encoding="utf-8",
     )
 
+    provenance = provenance_write(
+        service="visual",
+        action="generation_submit",
+        packet=args.packet_name,
+        details={
+            "workflow": args.workflow,
+            "workflow_submitted": str(submitted),
+            "generation_log": str(generation_log),
+            "status": "queued",
+            "stdout": result.stdout.strip(),
+        },
+    )
+
     print(f"Saved generation log: {generation_log}")
+    print(f"Saved provenance log: {provenance}")
     print("")
 
 
