@@ -4577,6 +4577,98 @@ def ocr_extract(args):
     else:
         print("No text extracted.\n")
 
+
+def ocr_report(args):
+    import json
+
+    packet = ocr_find_packet(args.packet_name)
+
+    print("\nLAIA OCR REPORT\n")
+
+    if not packet:
+        print("OCR packet not found. Use: laia packets list\n")
+        return
+
+    source_json = packet / "ocr-source.json"
+    ocr_json = packet / "ocr.json"
+    ocr_txt = packet / "ocr.txt"
+
+    if not source_json.exists():
+        print("Missing ocr-source.json\n")
+        return
+
+    source = json.loads(source_json.read_text(encoding="utf-8", errors="replace"))
+
+    ocr = {}
+    if ocr_json.exists():
+        ocr = json.loads(ocr_json.read_text(encoding="utf-8", errors="replace"))
+
+    text = ""
+    if ocr_txt.exists():
+        text = ocr_txt.read_text(encoding="utf-8", errors="replace")
+
+    report = packet / "ocr-report.md"
+
+    lines = [
+        "# LAIA OCR Report",
+        "",
+        f"- Packet: `{args.packet_name}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Source",
+        "",
+        f"- Original: `{source.get('source', '')}`",
+        f"- Evidence: `{source.get('evidence', '')}`",
+        "",
+        "## OCR",
+        "",
+        f"- Engine: `{ocr.get('engine', 'not run')}`",
+        f"- Text length: `{ocr.get('text_length', len(text))}`",
+        f"- Text file: `{ocr.get('text_file', str(ocr_txt))}`",
+        "",
+        "## Extracted Text Preview",
+        "",
+        "```text",
+        text.strip()[:3000] if text.strip() else "No text extracted.",
+        "```",
+        "",
+        "## Detected Fields",
+        "",
+        "- Document type: `review needed`",
+        "- Vendor / sender: `review needed`",
+        "- Amount: `review needed`",
+        "- Date: `review needed`",
+        "- Account / reference: `review needed`",
+        "",
+        "## Review Notes",
+        "",
+        "- Human review required before archive action.",
+        "- OCR may be incomplete for scanned, low-contrast, or faxed documents.",
+        "",
+    ]
+
+    report.write_text("\n".join(lines), encoding="utf-8")
+
+    packet_state_write(
+        packet,
+        "reported",
+        service="ocr",
+        details={"report": str(report)},
+    )
+
+    prov = provenance_write(
+        service="ocr",
+        action="report_created",
+        packet=args.packet_name,
+        details={
+            "report": str(report),
+            "text_length": len(text),
+        },
+    )
+
+    print(f"Report: {report}")
+    print(f"Provenance: {prov}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4918,6 +5010,10 @@ def main():
     ocr_extract_p = ocr_sub.add_parser("extract")
     ocr_extract_p.add_argument("packet_name")
     ocr_extract_p.set_defaults(func=ocr_extract)
+
+    ocr_report_p = ocr_sub.add_parser("report")
+    ocr_report_p.add_argument("packet_name")
+    ocr_report_p.set_defaults(func=ocr_report)
 
     args = parser.parse_args()
 
