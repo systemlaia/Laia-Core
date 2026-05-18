@@ -3316,6 +3316,7 @@ def publish_all(args=None):
     publish_jobs(args)
     publish_visual(args)
     publish_states(args)
+    publish_ocr(args)
 
 
 def librarian_orphaned(_args=None):
@@ -4715,6 +4716,57 @@ def ocr_lifecycle(args):
     print(f"Lifecycle provenance: {prov}")
     print("\nOCR lifecycle complete.\n")
 
+
+def publish_ocr(_args=None):
+    out = publish_dir() / "OCR_REPORTS.md"
+
+    lines = [
+        "# LAIA OCR Reports",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+    ]
+
+    ocr_dir = packets_dir() / "ocr"
+
+    if not ocr_dir.exists():
+        lines.append("_No OCR packets found._")
+    else:
+        packets = sorted(
+            [p for p in ocr_dir.iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+        if not packets:
+            lines.append("_No OCR packets found._")
+        else:
+            for packet in packets:
+                report = packet / "ocr-report.md"
+                ocr_txt = packet / "ocr.txt"
+                ocr_json = packet / "ocr.json"
+                state = packet / "packet-state.json"
+
+                lines.append(f"## {packet.name}")
+                lines.append("")
+                lines.append(f"- Packet: `{packet}`")
+                lines.append(f"- Report: `{'PASS' if report.exists() else 'MISSING'}`")
+                lines.append(f"- OCR text: `{'PASS' if ocr_txt.exists() else 'MISSING'}`")
+                lines.append(f"- OCR JSON: `{'PASS' if ocr_json.exists() else 'MISSING'}`")
+                lines.append(f"- State: `{'PASS' if state.exists() else 'MISSING'}`")
+
+                if report.exists():
+                    lines.append("")
+                    lines.append("### Report Preview")
+                    lines.append("")
+                    preview = report.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines.extend(preview[:60])
+
+                lines.append("")
+
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Published: {out}")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -5025,6 +5077,9 @@ def main():
 
     publish_states_p = publish_sub.add_parser("states")
     publish_states_p.set_defaults(func=publish_states)
+
+    publish_ocr_p = publish_sub.add_parser("ocr")
+    publish_ocr_p.set_defaults(func=publish_ocr)
 
     publish_all_p = publish_sub.add_parser("all")
     publish_all_p.set_defaults(func=publish_all)
