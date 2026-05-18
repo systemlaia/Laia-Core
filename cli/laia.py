@@ -4669,6 +4669,52 @@ def ocr_report(args):
     print(f"Report: {report}")
     print(f"Provenance: {prov}\n")
 
+
+def ocr_lifecycle(args):
+    print("\nLAIA OCR LIFECYCLE\n")
+
+    class Obj:
+        pass
+
+    o = Obj()
+    o.packet_name = args.packet_name
+
+    print("STEP 1 — Extract text")
+    ocr_extract(o)
+
+    print("STEP 2 — Create OCR report")
+    ocr_report(o)
+
+    print("STEP 3 — Rebuild librarian index")
+    librarian_index(None)
+
+    print("STEP 4 — Publish operational dashboard")
+    publish_all(None)
+
+    packet = ocr_find_packet(args.packet_name)
+    state_file = None
+
+    if packet:
+        state_file = packet_state_write(
+            packet,
+            "lifecycle_completed",
+            service="ocr",
+            details={"workflow": "ocr_lifecycle"},
+        )
+
+    prov = provenance_write(
+        service="ocr",
+        action="lifecycle_completed",
+        packet=args.packet_name,
+        details={
+            "status": "success",
+            "state_file": str(state_file) if state_file else "",
+        },
+    )
+
+    print(f"Lifecycle provenance: {prov}")
+    print("\nOCR lifecycle complete.\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -5014,6 +5060,10 @@ def main():
     ocr_report_p = ocr_sub.add_parser("report")
     ocr_report_p.add_argument("packet_name")
     ocr_report_p.set_defaults(func=ocr_report)
+
+    ocr_lifecycle_p = ocr_sub.add_parser("lifecycle")
+    ocr_lifecycle_p.add_argument("packet_name")
+    ocr_lifecycle_p.set_defaults(func=ocr_lifecycle)
 
     args = parser.parse_args()
 
