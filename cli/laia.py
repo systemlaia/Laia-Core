@@ -4423,6 +4423,127 @@ Created: {metadata['created_at']}
     print(f"Evidence copy: {copied}")
     print(f"Provenance: {prov}\n")
 
+
+def ocr_find_packet(packet_name: str):
+    p = ocr_packets_dir() / packet_name
+    return p if p.exists() else None
+
+
+def ocr_extract(args):
+    import json
+    import subprocess
+    import shutil
+
+    packet = ocr_find_packet(args.packet_name)
+
+    print("\nLAIA OCR EXTRACT\n")
+
+    if not packet:
+        print("OCR packet not found. Use: laia packets list\n")
+        return
+
+    source_meta = packet / "ocr-source.json"
+
+    if not source_meta.exists():
+        print("Missing ocr-source.json\n")
+        return
+
+    meta = json.loads(source_meta.read_text(encoding="utf-8", errors="replace"))
+    evidence = Path(meta["evidence"])
+
+    if not evidence.exists():
+        print(f"Missing evidence file: {evidence}\n")
+        return
+
+    text = ""
+    engine = ""
+    stderr = ""
+
+    suffix = evidence.suffix.lower()
+
+    if suffix == ".pdf":
+        tool = shutil.which("pdftotext")
+        if not tool:
+            print("pdftotext missing. Install poppler.\n")
+            return
+
+        result = subprocess.run(
+            [tool, "-layout", str(evidence), "-"],
+            capture_output=True,
+            text=True,
+        )
+
+        text = result.stdout
+        stderr = result.stderr
+        engine = "pdftotext"
+
+    else:
+        tool = shutil.which("tesseract")
+        if not tool:
+            print("tesseract missing.\n")
+            return
+
+        result = subprocess.run(
+            [tool, str(evidence), "stdout"],
+            capture_output=True,
+            text=True,
+        )
+
+        text = result.stdout
+        stderr = result.stderr
+        engine = "tesseract"
+
+    ocr_txt = packet / "ocr.txt"
+    ocr_json = packet / "ocr.json"
+
+    ocr_txt.write_text(text, encoding="utf-8")
+
+    data = {
+        "packet": args.packet_name,
+        "evidence": str(evidence),
+        "engine": engine,
+        "extracted_at": datetime.now().isoformat(),
+        "text_length": len(text),
+        "stderr": stderr[-4000:],
+        "text_file": str(ocr_txt),
+    }
+
+    ocr_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    packet_state_write(
+        packet,
+        "extracted",
+        service="ocr",
+        details={
+            "engine": engine,
+            "text_file": str(ocr_txt),
+            "text_length": len(text),
+        },
+    )
+
+    prov = provenance_write(
+        service="ocr",
+        action="text_extracted",
+        packet=args.packet_name,
+        details=data,
+    )
+
+    print(f"Packet: {packet}")
+    print(f"Evidence: {evidence}")
+    print(f"Engine: {engine}")
+    print(f"Text length: {len(text)}")
+    print(f"OCR text: {ocr_txt}")
+    print(f"OCR JSON: {ocr_json}")
+    print(f"Provenance: {prov}\n")
+
+    preview = text.strip()[:1000]
+    if preview:
+        print("Preview:")
+        print(preview)
+        print("")
+    else:
+        print("No text extracted.\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4760,6 +4881,10 @@ def main():
     ocr_packet_p = ocr_sub.add_parser("packet")
     ocr_packet_p.add_argument("source")
     ocr_packet_p.set_defaults(func=ocr_packet)
+
+    ocr_extract_p = ocr_sub.add_parser("extract")
+    ocr_extract_p.add_argument("packet_name")
+    ocr_extract_p.set_defaults(func=ocr_extract)
 
     args = parser.parse_args()
 
