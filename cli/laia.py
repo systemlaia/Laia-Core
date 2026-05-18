@@ -4477,6 +4477,39 @@ def ocr_extract(args):
         stderr = result.stderr
         engine = "pdftotext"
 
+        # Fallback for scanned/image PDFs
+        if len(text.strip()) < 50:
+            pdftoppm = shutil.which("pdftoppm")
+            tesseract = shutil.which("tesseract")
+
+            if pdftoppm and tesseract:
+                pages_dir = packet / "ocr_pages"
+                pages_dir.mkdir(exist_ok=True)
+
+                prefix = pages_dir / "page"
+
+                render = subprocess.run(
+                    [pdftoppm, "-png", "-r", "300", str(evidence), str(prefix)],
+                    capture_output=True,
+                    text=True,
+                )
+
+                page_files = sorted(pages_dir.glob("page-*.png"))
+                page_texts = []
+
+                for page in page_files:
+                    ocr = subprocess.run(
+                        [tesseract, str(page), "stdout"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    page_texts.append(f"\n\n--- PAGE {len(page_texts)+1}: {page.name} ---\n\n{ocr.stdout}")
+                    stderr += "\n" + ocr.stderr
+
+                if page_texts:
+                    text = "\n".join(page_texts)
+                    engine = "pdftotext+tesseract_pdf_fallback"
+
     else:
         tool = shutil.which("tesseract")
         if not tool:
