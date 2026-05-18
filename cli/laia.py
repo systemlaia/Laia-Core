@@ -1980,6 +1980,7 @@ def packet_categories():
     return {
         "nas_retrieval": packets_dir() / "nas_retrieval",
         "visual": packets_dir() / "visual",
+        "ocr": packets_dir() / "ocr",
     }
 
 
@@ -2052,6 +2053,7 @@ def packets_list(_args=None):
     categories = {
         "nas_retrieval": packets_dir() / "nas_retrieval",
         "visual": packets_dir() / "visual",
+        "ocr": packets_dir() / "ocr",
     }
 
     found_any = False
@@ -4332,6 +4334,95 @@ def doctor_phase3(_args=None):
     print(f"Failed: {len(failed)}")
     print("")
 
+
+def ocr_packets_dir():
+    d = packets_dir() / "ocr"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ocr_status(_args=None):
+    import shutil
+
+    print("\nLAIA OCR STATUS\n")
+    print(f"OCR packet dir: {ocr_packets_dir()}")
+
+    for tool in ["tesseract", "pdftotext"]:
+        found = shutil.which(tool)
+        print(f"{tool}: {'PASS' if found else 'MISSING'}" + (f" — {found}" if found else ""))
+
+    print("")
+
+
+def ocr_packet(args):
+    import shutil
+    import json
+
+    source = Path(args.source).expanduser().resolve()
+
+    print("\nLAIA OCR PACKET\n")
+
+    if not source.exists():
+        print(f"Missing source: {source}\n")
+        return
+
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = slugify(source.stem)[:60]
+    packet = ocr_packets_dir() / f"{stamp}-{slug}"
+    packet.mkdir(parents=True, exist_ok=True)
+
+    evidence_dir = packet / "evidence"
+    evidence_dir.mkdir(exist_ok=True)
+
+    copied = evidence_dir / source.name
+    shutil.copy2(source, copied)
+
+    metadata = {
+        "type": "ocr",
+        "source": str(source),
+        "evidence": str(copied),
+        "created_at": datetime.now().isoformat(),
+        "status": "created",
+    }
+
+    (packet / "ocr-source.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    readme = f"""# LAIA OCR Packet
+
+Type: ocr
+Created: {metadata['created_at']}
+
+## Source
+
+- Original: `{source}`
+- Evidence copy: `{copied}`
+
+## Rules
+
+- Originals are sacred.
+- OCR output requires review before archive action.
+"""
+
+    (packet / "README.md").write_text(readme, encoding="utf-8")
+
+    packet_state_write(
+        packet,
+        "created",
+        service="ocr",
+        details={"source": str(source), "evidence": str(copied)},
+    )
+
+    prov = provenance_write(
+        service="ocr",
+        action="packet_created",
+        packet=packet.name,
+        details=metadata,
+    )
+
+    print(f"Created OCR packet: {packet}")
+    print(f"Evidence copy: {copied}")
+    print(f"Provenance: {prov}\n")
+
 def main():
     parser = argparse.ArgumentParser(prog="laia")
     sub = parser.add_subparsers(dest="command")
@@ -4658,6 +4749,17 @@ def main():
 
     phase3_doctor_p = sub.add_parser("phase3-doctor")
     phase3_doctor_p.set_defaults(func=doctor_phase3)
+
+
+    ocr_p = sub.add_parser("ocr")
+    ocr_sub = ocr_p.add_subparsers(dest="subcommand")
+
+    ocr_status_p = ocr_sub.add_parser("status")
+    ocr_status_p.set_defaults(func=ocr_status)
+
+    ocr_packet_p = ocr_sub.add_parser("packet")
+    ocr_packet_p.add_argument("source")
+    ocr_packet_p.set_defaults(func=ocr_packet)
 
     args = parser.parse_args()
 
