@@ -3929,8 +3929,13 @@ PACKET_STATES = [
     "generated",
     "collected",
     "inspected",
+    "extracted",
+    "captioned",
     "reported",
     "published",
+    "needs_review",
+    "duplicate",
+    "archived",
     "lifecycle_completed",
 ]
 
