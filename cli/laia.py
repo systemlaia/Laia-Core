@@ -125,6 +125,136 @@ def get_packet_vault_dir() -> Path:
     return packet_dir
 
 
+def get_packet_note_path(packet_id: str) -> Path:
+    return get_packet_vault_dir() / f"{packet_id}.md"
+
+
+def write_packet_note(packet: dict):
+    packet_note = get_packet_note_path(packet["packet_id"])
+    frontmatter = {
+        "type": "packet",
+        "packet_id": packet.get("packet_id", ""),
+        "title": packet.get("title", ""),
+        "packet_type": packet.get("packet_type", ""),
+        "status": packet.get("status", ""),
+        "project": packet.get("project", ""),
+        "created": packet.get("created", ""),
+        "updated": packet.get("updated", ""),
+        "summary": packet.get("summary", ""),
+        "source_paths": packet.get("source_paths", []),
+        "next_actions": packet.get("next_actions", []),
+    }
+    if packet.get("closed_at"):
+        frontmatter["closed_at"] = packet["closed_at"]
+    if packet.get("close_reason"):
+        frontmatter["close_reason"] = packet["close_reason"]
+
+    source_paths = packet.get("source_paths") or []
+    next_actions = packet.get("next_actions") or []
+
+    body_lines = [
+        f"# {packet.get('title', '')}",
+        "",
+        f"**Packet ID:** `{packet.get('packet_id', '')}`",
+        f"**Type:** `{packet.get('packet_type', '')}`",
+        f"**Status:** `{packet.get('status', '')}`",
+        f"**Project:** `{packet.get('project', '')}`",
+        f"**Created:** `{packet.get('created', '')}`",
+        f"**Updated:** `{packet.get('updated', '')}`",
+    ]
+    if packet.get("closed_at"):
+        body_lines.extend([
+            f"**Closed At:** `{packet.get('closed_at', '')}`",
+            f"**Close Reason:** `{packet.get('close_reason', '')}`",
+        ])
+    body_lines.extend([
+        "",
+        "## Summary",
+        "",
+        packet.get("summary", "") or "No summary yet.",
+        "",
+        "## Source Paths",
+        "",
+    ])
+    if source_paths:
+        for path in source_paths:
+            body_lines.append(f"- {path}")
+    else:
+        body_lines.append("- None yet")
+    body_lines.extend([
+        "",
+        "## Next Actions",
+        "",
+    ])
+    if next_actions:
+        for action in next_actions:
+            body_lines.append(f"- {action}")
+    else:
+        body_lines.append("- None yet")
+
+    write_markdown_with_frontmatter(packet_note, frontmatter, body_lines)
+
+
+def find_packet_record(packet_id: str):
+    index = load_packet_index()
+    for packet in index.get("packets", []):
+        if packet.get("packet_id") == packet_id:
+            return packet, index
+    return None, index
+
+
+def packet_update(args):
+    packet_id = args.packet_id
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    updated = False
+    if args.status:
+        packet["status"] = args.status
+        updated = True
+    if args.summary is not None:
+        packet["summary"] = args.summary
+        updated = True
+    if args.project:
+        packet["project"] = args.project
+        updated = True
+    if args.type:
+        packet["packet_type"] = args.type
+        updated = True
+    if args.next_action:
+        if "next_actions" not in packet or not isinstance(packet["next_actions"], list):
+            packet["next_actions"] = []
+        packet["next_actions"].append(args.next_action)
+        updated = True
+
+    if not updated:
+        print("No update fields provided.")
+        return
+
+    packet["updated"] = datetime.now().isoformat()
+    save_packet_index(index)
+    write_packet_note(packet)
+    print(f"Updated packet: {packet_id}")
+
+
+def packet_close(args):
+    packet_id = args.packet_id
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    packet["status"] = "complete"
+    packet["closed_at"] = datetime.now().isoformat()
+    packet["close_reason"] = args.reason or ""
+    packet["updated"] = datetime.now().isoformat()
+    save_packet_index(index)
+    write_packet_note(packet)
+    print(f"Closed packet: {packet_id}")
+
+
 def build_packet_id(title: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"packet-{timestamp}-{slugify(title)}"
@@ -5221,6 +5351,20 @@ def main():
     packet_show_p = packet_sub.add_parser("show")
     packet_show_p.add_argument("packet_id")
     packet_show_p.set_defaults(func=packet_show)
+
+    packet_update_p = packet_sub.add_parser("update")
+    packet_update_p.add_argument("packet_id")
+    packet_update_p.add_argument("--status", dest="status")
+    packet_update_p.add_argument("--summary", dest="summary")
+    packet_update_p.add_argument("--project", dest="project")
+    packet_update_p.add_argument("--type", dest="type")
+    packet_update_p.add_argument("--next-action", dest="next_action")
+    packet_update_p.set_defaults(func=packet_update)
+
+    packet_close_p = packet_sub.add_parser("close")
+    packet_close_p.add_argument("packet_id")
+    packet_close_p.add_argument("--reason", default="", dest="reason")
+    packet_close_p.set_defaults(func=packet_close)
 
     # Mode management
     mode_p = sub.add_parser("mode")
