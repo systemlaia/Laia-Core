@@ -3406,6 +3406,59 @@ Created: {datetime.now().isoformat()}
     print("")
 
 
+def visual_review(args):
+    packet_dir = visual_packets_dir() / args.packet
+    outputs_dir = packet_dir / "outputs"
+
+    print("\nLAIA VISUAL REVIEW\n")
+    print(f"Packet path: {packet_dir}")
+    print(f"Outputs path: {outputs_dir}")
+
+    if not outputs_dir.exists() or not outputs_dir.is_dir():
+        print(f"Outputs directory missing: {outputs_dir}")
+        print("Create the visual packet outputs first.")
+        raise SystemExit(1)
+
+    image_files = []
+    for ext in ("*.png", "*.jpg", "*.jpeg"):
+        image_files.extend(sorted(outputs_dir.glob(ext)))
+
+    if not image_files:
+        print(f"No image files found in outputs: {outputs_dir}")
+        raise SystemExit(1)
+
+    review_items = []
+    for image_path in image_files:
+        command = [
+            "ollama",
+            "run",
+            "llava:latest",
+            "Describe this image in one sentence.",
+            str(image_path),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            caption = result.stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            caption = f"ERROR: {exc.stderr.strip() if exc.stderr else exc}"
+
+        print(f"{image_path.name}: {caption}")
+        review_items.append({
+            "file": image_path.name,
+            "caption": caption,
+            "reviewed_by": "ollama/llava:latest",
+        })
+
+    review_path = packet_dir / "review.json"
+    review_path.write_text(json.dumps(review_items, indent=2) + "\n", encoding="utf-8")
+    print(f"Saved review: {review_path}")
+
+
 def visual_generate(args):
     packet = find_packet("visual", args.packet_name)
 
@@ -6066,6 +6119,10 @@ def main():
     visual_caption_p.add_argument("--model", default="llava:latest")
     visual_caption_p.add_argument("--prompt", default="")
     visual_caption_p.set_defaults(func=visual_caption)
+
+    visual_review_p = visual_sub.add_parser("review")
+    visual_review_p.add_argument("packet")
+    visual_review_p.set_defaults(func=visual_review)
 
     visual_inspect_p = visual_sub.add_parser("inspect")
     visual_inspect_p.add_argument("packet_name")
