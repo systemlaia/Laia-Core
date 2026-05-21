@@ -950,6 +950,156 @@ def doctor(_args=None):
 
     print("")
 
+def personal_os_init(_args=None):
+    state_dir = LAIA_ROOT / "state"
+    packets_dir = LAIA_ROOT / "packets"
+    vault_dashboard_dir = LAIA_ROOT / "vault" / "01 Dashboard"
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    packets_dir.mkdir(parents=True, exist_ok=True)
+    vault_dashboard_dir.mkdir(parents=True, exist_ok=True)
+
+    mode_path = state_dir / "mode.json"
+    core_memory = state_dir / "core_memory.md"
+    packets_index_json = packets_dir / "index.json"
+    packets_index_md = packets_dir / "index.md"
+    personal_md = vault_dashboard_dir / "personal-os.md"
+
+    if not mode_path.exists():
+        default_modes = [
+            "idle",
+            "planning",
+            "focus",
+            "capture",
+            "review",
+            "maintenance",
+            "field",
+            "offline",
+        ]
+        mode_path.write_text(
+            json.dumps({
+                "current": "unknown",
+                "reason": "",
+                "set_at": None,
+                "available_modes": default_modes,
+            }, indent=2),
+            encoding="utf-8",
+        )
+        print(f"Created: {mode_path}")
+    else:
+        print(f"Exists: {mode_path}")
+
+    if not core_memory.exists():
+        core_memory.write_text("# Core Memory\n\n", encoding="utf-8")
+        print(f"Created: {core_memory}")
+    else:
+        print(f"Exists: {core_memory}")
+
+    if not packets_index_json.exists():
+        packets_index_json.write_text(json.dumps({"packets": []}, indent=2), encoding="utf-8")
+        print(f"Created: {packets_index_json}")
+    else:
+        print(f"Exists: {packets_index_json}")
+
+    if not packets_index_md.exists():
+        packets_index_md.write_text("# Packets Index\n\n", encoding="utf-8")
+        print(f"Created: {packets_index_md}")
+    else:
+        print(f"Exists: {packets_index_md}")
+
+    if not personal_md.exists():
+        personal_md.write_text("# Personal OS\n\nThis note is managed by `laia personal-os`.\n", encoding="utf-8")
+        print(f"Created: {personal_md}")
+    else:
+        print(f"Exists: {personal_md}")
+
+
+def personal_os_doctor(_args=None):
+    print("\nPERSONAL OS DOCTOR\n")
+    checks = [
+        ("state dir", LAIA_ROOT / "state"),
+        ("mode.json", LAIA_ROOT / "state" / "mode.json"),
+        ("core_memory.md", LAIA_ROOT / "state" / "core_memory.md"),
+        ("packets index json", LAIA_ROOT / "packets" / "index.json"),
+        ("packets index md", LAIA_ROOT / "packets" / "index.md"),
+        ("personal dashboard note", LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"),
+    ]
+
+    for label, path in checks:
+        status = "PASS" if path.exists() else "MISSING"
+        print(f"{status}: {label} — {path}")
+
+
+def personal_os_dashboard(_args=None):
+    personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
+    if not personal_md.exists():
+        print("Dashboard note not found. Run: laia personal-os init")
+        return
+    print(personal_md.read_text(encoding="utf-8"))
+
+
+def _mode_path() -> Path:
+    state_dir = LAIA_ROOT / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "mode.json"
+
+
+def mode_list(_args=None):
+    path = _mode_path()
+    if not path.exists():
+        print("No mode state found. Run: laia personal-os init or set a mode.")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        print("Unable to read mode state.")
+        return
+
+    available = data.get("available_modes")
+    if not available:
+        print("No available modes defined in mode state.")
+        return
+    print("Available modes:")
+    for m in available:
+        print(f"- {m}")
+
+
+def mode_show(_args=None):
+    path = _mode_path()
+    if not path.exists():
+        print("Mode not set. Run: laia mode set <mode> --reason \"reason\"")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        print("Unable to read mode state.")
+        return
+
+    print("Current mode:")
+    print(f"- mode: {data.get('current')}")
+    print(f"- reason: {data.get('reason')}")
+    print(f"- set_at: {data.get('set_at')}")
+
+
+def mode_set(args):
+    mode_value = getattr(args, "mode", None)
+    reason = getattr(args, "reason", "")
+    if not mode_value:
+        print("Mode value required.")
+        raise SystemExit(1)
+
+    path = _mode_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        data = {}
+
+    data["current"] = mode_value
+    data["reason"] = reason
+    data["set_at"] = datetime.now().isoformat()
+
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    print(f"Mode set: {mode_value}")
 
 
 # ---------------------------------------------------------------------
@@ -4779,6 +4929,34 @@ def main():
     sub.add_parser("briefing")
     sub.add_parser("doctor")
     sub.add_parser("day")
+
+    # Personal OS commands (Phase 1)
+    personal_os_p = sub.add_parser("personal-os")
+    personal_os_sub = personal_os_p.add_subparsers(dest="subcommand")
+
+    personal_os_init_p = personal_os_sub.add_parser("init")
+    personal_os_init_p.set_defaults(func=personal_os_init)
+
+    personal_os_doctor_p = personal_os_sub.add_parser("doctor")
+    personal_os_doctor_p.set_defaults(func=personal_os_doctor)
+
+    personal_os_dashboard_p = personal_os_sub.add_parser("dashboard")
+    personal_os_dashboard_p.set_defaults(func=personal_os_dashboard)
+
+    # Mode management
+    mode_p = sub.add_parser("mode")
+    mode_sub = mode_p.add_subparsers(dest="subcommand")
+
+    mode_list_p = mode_sub.add_parser("list")
+    mode_list_p.set_defaults(func=mode_list)
+
+    mode_show_p = mode_sub.add_parser("show")
+    mode_show_p.set_defaults(func=mode_show)
+
+    mode_set_p = mode_sub.add_parser("set")
+    mode_set_p.add_argument("mode")
+    mode_set_p.add_argument("--reason", default="")
+    mode_set_p.set_defaults(func=mode_set)
 
     focus_p = sub.add_parser("focus")
     focus_p.add_argument("--energy", default=None)
