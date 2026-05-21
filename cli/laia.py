@@ -255,6 +255,161 @@ def packet_close(args):
     print(f"Closed packet: {packet_id}")
 
 
+def _mode_state_path() -> Path:
+    return LAIA_ROOT / "state" / "mode.json"
+
+
+def read_mode_state():
+    path = _mode_state_path()
+    if not path.exists():
+        return None, path
+    data = load_json_file(path)
+    if not isinstance(data, dict):
+        return None, path
+    return data, path
+
+
+def read_packet_index_file():
+    index_path = LAIA_ROOT / "packets" / "index.json"
+    if not index_path.exists():
+        return None, index_path
+    data = load_json_file(index_path)
+    if not isinstance(data, dict):
+        return {"packets": []}, index_path
+    if "packets" not in data or not isinstance(data["packets"], list):
+        data["packets"] = []
+    return data, index_path
+
+
+def _packet_display_line(packet: dict) -> str:
+    return (
+        f"- {packet.get('packet_id', 'UNKNOWN')} | {packet.get('title', '')} | "
+        f"{packet.get('packet_type', '')} | {packet.get('status', '')} | "
+        f"{packet.get('project', '')}"
+    )
+
+
+def agent_list(_args=None):
+    agents = {
+        "operator": "Monitor current mode, manage active/review packets, and surface blocking or next actions.",
+        "librarian": "Protect archive safety, review archive-related packets, and monitor review needs.",
+        "ingest": "Track ingest-related packets and keep active/review work moving.",
+        "documentation": "Review completed items, missing summaries, and report candidates.",
+    }
+    print("Supported agents:")
+    for agent_name, description in agents.items():
+        print(f"- {agent_name}: {description}")
+
+
+def agent_brief(args):
+    agent_name = args.agent_name
+    mode_data, mode_path = read_mode_state()
+    packet_data, packet_path = read_packet_index_file()
+
+    if mode_data is None:
+        print(f"Mode state missing: {mode_path}")
+        print("Run: laia personal-os init")
+        return
+    if packet_data is None:
+        print(f"Packet index missing: {packet_path}")
+        print("Run: laia personal-os init")
+        return
+
+    packets = packet_data.get("packets", [])
+    current_mode = mode_data.get("current", "unknown")
+    active_review_statuses = {"active", "review"}
+
+    def matching_packets(types=None, statuses=None):
+        result = []
+        for packet in packets:
+            if types and packet.get("packet_type") not in types:
+                continue
+            if statuses and packet.get("status") not in statuses:
+                continue
+            result.append(packet)
+        return result
+
+    def print_packet_list(title, packet_list):
+        print(f"{title}")
+        if not packet_list:
+            print("- None")
+            return
+        for packet in packet_list:
+            print(f"  {packet.get('packet_id', 'UNKNOWN')} | {packet.get('title', '')} | {packet.get('status', '')} | {packet.get('packet_type', '')}")
+
+    if agent_name == "operator":
+        active_review_packets = matching_packets(statuses=active_review_statuses)
+        blocked_packets = matching_packets(statuses={"blocked"})
+        next_actions = [
+            action
+            for packet in active_review_packets
+            for action in (packet.get("next_actions") or [])
+        ]
+
+        print("OPERATOR BRIEF")
+        print(f"Current mode: {current_mode}")
+        print("")
+        print_packet_list("Active/Review packets:", active_review_packets)
+        print("")
+        print_packet_list("Blocked packets:", blocked_packets)
+        print("")
+        print("Suggested next action:")
+        if next_actions:
+            for idx, action in enumerate(next_actions[:5], start=1):
+                print(f"- {action}")
+        else:
+            print("- No next actions found for active/review packets.")
+
+    elif agent_name == "librarian":
+        archive_types = {"nas", "archive", "research", "system"}
+        subject_packets = matching_packets(types=archive_types)
+        review_packets = matching_packets(statuses={"review"})
+
+        print("LIBRARIAN BRIEF")
+        print("Archive safety doctrine:")
+        print("- Preserve original materials and source copies.")
+        print("- Prefer immutable, verified archive paths for critical content.")
+        print("- Escalate review items before archive actions.")
+        print("")
+        print_packet_list("Archive-related packets:", subject_packets)
+        print("")
+        print_packet_list("Packets needing review:", review_packets)
+
+    elif agent_name == "ingest":
+        ingest_types = {"ingest", "component", "photo", "document", "visual"}
+        ingest_packets = matching_packets(types=ingest_types)
+        active_review_packets = matching_packets(statuses=active_review_statuses)
+
+        print("INGEST BRIEF")
+        print_packet_list("Ingest-related packets:", ingest_packets)
+        print("")
+        print_packet_list("Active/Review packets:", active_review_packets)
+
+    elif agent_name == "documentation":
+        complete_review_packets = matching_packets(statuses={"complete", "review"})
+        missing_summary = [
+            packet
+            for packet in packets
+            if not packet.get("summary") or not str(packet.get("summary")).strip()
+        ]
+        report_candidates = [
+            packet
+            for packet in packets
+            if packet.get("summary") and packet.get("status") in {"active", "review", "complete"}
+        ]
+
+        print("DOCUMENTATION BRIEF")
+        print_packet_list("Complete/Review packets:", complete_review_packets)
+        print("")
+        print_packet_list("Packets missing summaries:", missing_summary)
+        print("")
+        print_packet_list("Candidates for reports:", report_candidates)
+
+    else:
+        print(f"Unknown agent: {agent_name}")
+        print("Use: laia agent list")
+
+
 def build_packet_id(title: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"packet-{timestamp}-{slugify(title)}"
@@ -5365,6 +5520,16 @@ def main():
     packet_close_p.add_argument("packet_id")
     packet_close_p.add_argument("--reason", default="", dest="reason")
     packet_close_p.set_defaults(func=packet_close)
+
+    agent_p = sub.add_parser("agent")
+    agent_sub = agent_p.add_subparsers(dest="subcommand")
+
+    agent_list_p = agent_sub.add_parser("list")
+    agent_list_p.set_defaults(func=agent_list)
+
+    agent_brief_p = agent_sub.add_parser("brief")
+    agent_brief_p.add_argument("agent_name", choices=["operator", "librarian", "ingest", "documentation"])
+    agent_brief_p.set_defaults(func=agent_brief)
 
     # Mode management
     mode_p = sub.add_parser("mode")
