@@ -72,6 +72,164 @@ def load_yaml_file(path: Path):
         return yaml.safe_load(f)
 
 
+def load_json_file(path: Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def get_personal_os_vault_root() -> Path:
+    vault_path = os.environ.get("LAIA_VAULT_PATH")
+    if vault_path:
+        return Path(vault_path).expanduser()
+    return LAIA_ROOT / "vaults" / "Blue Book"
+
+
+def write_markdown_with_frontmatter(path: Path, frontmatter: dict, body_lines: list[str]):
+    content = "---\n"
+    content += yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+    content += "---\n\n"
+    if body_lines:
+        content += "\n".join(body_lines).strip() + "\n"
+    path.write_text(content, encoding="utf-8")
+
+
+def get_packet_index_path() -> Path:
+    index_path = LAIA_ROOT / "packets" / "index.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    return index_path
+
+
+def load_packet_index() -> dict:
+    index_path = get_packet_index_path()
+    content = load_json_file(index_path)
+    if not isinstance(content, dict):
+        return {"packets": []}
+    if "packets" not in content or not isinstance(content["packets"], list):
+        content["packets"] = []
+    return content
+
+
+def save_packet_index(data: dict):
+    index_path = get_packet_index_path()
+    index_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def get_packet_vault_dir() -> Path:
+    vault_root = get_personal_os_vault_root()
+    packet_dir = vault_root / "04_PACKETS"
+    packet_dir.mkdir(parents=True, exist_ok=True)
+    return packet_dir
+
+
+def build_packet_id(title: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"packet-{timestamp}-{slugify(title)}"
+
+
+def packet_create(args):
+    title = " ".join(args.title).strip()
+    packet_type = args.type
+    project = args.project
+    status = args.status
+
+    packet_id = build_packet_id(title)
+    index = load_packet_index()
+    existing_ids = {packet.get("packet_id") for packet in index.get("packets", [])}
+    if packet_id in existing_ids:
+        print(f"Packet already exists: {packet_id}")
+        return
+
+    created_at = datetime.now().isoformat()
+    packet = {
+        "packet_id": packet_id,
+        "title": title,
+        "packet_type": packet_type,
+        "status": status,
+        "project": project,
+        "created": created_at,
+        "updated": created_at,
+        "summary": "",
+        "source_paths": [],
+        "next_actions": [],
+    }
+
+    index["packets"].append(packet)
+    save_packet_index(index)
+
+    packet_note = get_packet_vault_dir() / f"{packet_id}.md"
+    if packet_note.exists():
+        print(f"Packet note already exists: {packet_note}")
+    else:
+        write_markdown_with_frontmatter(
+            packet_note,
+            {
+                "type": "packet",
+                "packet_id": packet_id,
+                "title": title,
+                "packet_type": packet_type,
+                "status": status,
+                "project": project,
+                "created": created_at,
+                "updated": created_at,
+                "summary": "",
+                "source_paths": [],
+                "next_actions": [],
+            },
+            [
+                f"# {title}",
+                "",
+                f"**Packet ID:** `{packet_id}`",
+                f"**Type:** `{packet_type}`",
+                f"**Status:** `{status}`",
+                f"**Project:** `{project}`",
+                "",
+                "## Summary",
+                "",
+                "",
+                "## Source Paths",
+                "",
+                "- None yet",
+                "",
+                "## Next Actions",
+                "",
+                "- None yet",
+            ],
+        )
+        print(f"Created packet note: {packet_note}")
+
+    print(f"Created packet: {packet_id}")
+
+
+def packet_list(_args=None):
+    index = load_packet_index()
+    packets = index.get("packets", [])
+    print("\nLAIA PACKETS\n")
+    if not packets:
+        print("No packets found.")
+        return
+    for packet in packets:
+        print(
+            f"- {packet.get('packet_id', '')} | {packet.get('title', '')} | "
+            f"{packet.get('packet_type', '')} | {packet.get('status', '')} | "
+            f"{packet.get('project', '')}"
+        )
+
+
+def packet_show(args):
+    packet_id = args.packet_id
+    index = load_packet_index()
+    packets = index.get("packets", [])
+    for packet in packets:
+        if packet.get("packet_id") == packet_id:
+            print(json.dumps(packet, indent=2))
+            return
+    print(f"Packet not found: {packet_id}")
+
+
 def load_sync_config():
     path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
     data = load_yaml_file(path)
@@ -1051,6 +1209,92 @@ def personal_os_dashboard(_args=None):
         print("Dashboard note not found. Run: laia personal-os init")
         return
     print(personal_md.read_text(encoding="utf-8"))
+
+
+def personal_os_sync_obsidian(_args=None):
+    vault_root = get_personal_os_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    packets_dir = vault_root / "04_PACKETS"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    packets_dir.mkdir(parents=True, exist_ok=True)
+
+    mode_path = LAIA_ROOT / "state" / "mode.json"
+    packets_index_path = LAIA_ROOT / "packets" / "index.json"
+
+    mode_data = load_json_file(mode_path) or {}
+    packet_data = load_json_file(packets_index_path) or {}
+    packet_list = packet_data.get("packets") if isinstance(packet_data, dict) else None
+
+    current_mode_path = system_dir / "current-mode.md"
+    current_mode = mode_data.get("current", "unknown")
+    current_reason = mode_data.get("reason", "")
+    current_updated = mode_data.get("set_at") or datetime.now().isoformat()
+    write_markdown_with_frontmatter(
+        current_mode_path,
+        {
+            "type": "mode_state",
+            "mode": current_mode,
+            "reason": current_reason,
+            "updated": current_updated,
+        },
+        [
+            "# Current Mode",
+            "",
+            f"Mode: `{current_mode}`",
+            f"Reason: `{current_reason}`",
+            f"Updated: `{current_updated}`",
+        ],
+    )
+
+    core_health_path = system_dir / "core-health.md"
+    core_status = "active" if mode_data else "missing state"
+    health_updated = datetime.now().isoformat()
+    write_markdown_with_frontmatter(
+        core_health_path,
+        {
+            "type": "core-health",
+            "service": "LAIA Core",
+            "status": core_status,
+            "updated": health_updated,
+        },
+        [
+            "# Core Health",
+            "",
+            f"State file: `{mode_path}`",
+            f"Packets index file: `{packets_index_path}`",
+            f"Status: `{core_status}`",
+            f"Updated: `{health_updated}`",
+        ],
+    )
+
+    packets_output_path = packets_dir / "index.md"
+    packet_count = len(packet_list) if isinstance(packet_list, list) else 0
+    body_lines = ["# Packet Index", "", f"{packet_count} packets registered", ""]
+    if packet_count:
+        body_lines.extend([
+            "| Packet | Type | Status | Project |",
+            "| --- | --- | --- | --- |",
+        ])
+        for packet in packet_list:
+            packet_name = packet.get("name") or packet.get("id") or packet.get("packet", "")
+            packet_type = packet.get("type", "")
+            packet_status = packet.get("status", "")
+            packet_project = packet.get("project", "")
+            body_lines.append(f"| {packet_name} | {packet_type} | {packet_status} | {packet_project} |")
+    else:
+        body_lines = ["# Packet Index", "", "No packets registered yet."]
+
+    write_markdown_with_frontmatter(
+        packets_output_path,
+        {
+            "type": "packet_index",
+            "updated": datetime.now().isoformat(),
+            "packet_count": packet_count,
+        },
+        body_lines,
+    )
+
+    print(f"Exported personal-os state to vault: {vault_root}")
 
 
 def _mode_path() -> Path:
@@ -4958,6 +5202,26 @@ def main():
     personal_os_dashboard_p = personal_os_sub.add_parser("dashboard")
     personal_os_dashboard_p.set_defaults(func=personal_os_dashboard)
 
+    personal_os_sync_obsidian_p = personal_os_sub.add_parser("sync-obsidian")
+    personal_os_sync_obsidian_p.set_defaults(func=personal_os_sync_obsidian)
+
+    packet_p = sub.add_parser("packet")
+    packet_sub = packet_p.add_subparsers(dest="subcommand")
+
+    packet_create_p = packet_sub.add_parser("create")
+    packet_create_p.add_argument("title", nargs="+")
+    packet_create_p.add_argument("--type", required=True, dest="type")
+    packet_create_p.add_argument("--project", required=True, dest="project")
+    packet_create_p.add_argument("--status", default="active", dest="status")
+    packet_create_p.set_defaults(func=packet_create)
+
+    packet_list_p = packet_sub.add_parser("list")
+    packet_list_p.set_defaults(func=packet_list)
+
+    packet_show_p = packet_sub.add_parser("show")
+    packet_show_p.add_argument("packet_id")
+    packet_show_p.set_defaults(func=packet_show)
+
     # Mode management
     mode_p = sub.add_parser("mode")
     mode_sub = mode_p.add_subparsers(dest="subcommand")
@@ -5012,7 +5276,7 @@ def main():
     dict_meal.add_argument("text", nargs="+")
     dict_meal.set_defaults(func=dictation_meal)
 
-    
+
     dev_p = sub.add_parser("dev")
     dev_sub = dev_p.add_subparsers(dest="subcommand")
 
@@ -5348,7 +5612,7 @@ def main():
         dictation_task(args)
     elif args.command == "dictation" and args.subcommand == "meal":
         dictation_meal(args)
-    
+
     elif args.command == "dev" and args.subcommand == "request":
         dev_request(args)
     elif args.command == "dev" and args.subcommand == "inbox":
