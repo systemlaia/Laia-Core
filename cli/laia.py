@@ -281,12 +281,124 @@ def read_packet_index_file():
     return data, index_path
 
 
-def _packet_display_line(packet: dict) -> str:
+def get_agent_brief_path(agent_name: str) -> Path:
+    vault_root = get_personal_os_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / f"agent-{agent_name}.md"
+
+
+def write_agent_brief(agent_name: str, lines: list[str]):
+    path = get_agent_brief_path(agent_name)
+    write_markdown_with_frontmatter(
+        path,
+        {
+            "type": "agent_brief",
+            "agent": agent_name,
+            "status": "active",
+            "updated": datetime.now().isoformat(),
+        },
+        lines,
+    )
+    print(f"Wrote agent brief: {path}")
+
+
+def _format_packet_row(packet: dict) -> str:
     return (
         f"- {packet.get('packet_id', 'UNKNOWN')} | {packet.get('title', '')} | "
-        f"{packet.get('packet_type', '')} | {packet.get('status', '')} | "
-        f"{packet.get('project', '')}"
+        f"{packet.get('status', '')} | {packet.get('packet_type', '')} | {packet.get('project', '')}"
     )
+
+
+def _build_agent_brief(agent_name: str, mode_data: dict, packets: list[dict]) -> list[str]:
+    current_mode = mode_data.get("current", "unknown")
+    active_review_statuses = {"active", "review"}
+
+    def matching_packets(types=None, statuses=None):
+        result = []
+        for packet in packets:
+            if types and packet.get("packet_type") not in types:
+                continue
+            if statuses and packet.get("status") not in statuses:
+                continue
+            result.append(packet)
+        return result
+
+    def format_packet_list(title, packet_list):
+        lines = [title]
+        if not packet_list:
+            lines.append("- None")
+        else:
+            for packet in packet_list:
+                lines.append(_format_packet_row(packet))
+        return lines
+
+    lines = [f"{agent_name.upper()} BRIEF", ""]
+    if agent_name == "operator":
+        active_review_packets = matching_packets(statuses=active_review_statuses)
+        blocked_packets = matching_packets(statuses={"blocked"})
+        next_actions = [
+            action
+            for packet in active_review_packets
+            for action in (packet.get("next_actions") or [])
+        ]
+
+        lines.append(f"Current mode: {current_mode}")
+        lines.append("")
+        lines.extend(format_packet_list("Active/Review packets:", active_review_packets))
+        lines.append("")
+        lines.extend(format_packet_list("Blocked packets:", blocked_packets))
+        lines.append("")
+        lines.append("Suggested next action:")
+        if next_actions:
+            for action in next_actions[:5]:
+                lines.append(f"- {action}")
+        else:
+            lines.append("- No next actions found for active/review packets.")
+
+    elif agent_name == "librarian":
+        archive_types = {"nas", "archive", "research", "system"}
+        subject_packets = matching_packets(types=archive_types)
+        review_packets = matching_packets(statuses={"review"})
+
+        lines.append("Archive safety doctrine:")
+        lines.append("- Preserve original materials and source copies.")
+        lines.append("- Prefer immutable, verified archive paths for critical content.")
+        lines.append("- Escalate review items before archive actions.")
+        lines.append("")
+        lines.extend(format_packet_list("Archive-related packets:", subject_packets))
+        lines.append("")
+        lines.extend(format_packet_list("Packets needing review:", review_packets))
+
+    elif agent_name == "ingest":
+        ingest_types = {"ingest", "component", "photo", "document", "visual"}
+        ingest_packets = matching_packets(types=ingest_types)
+        active_review_packets = matching_packets(statuses=active_review_statuses)
+
+        lines.extend(format_packet_list("Ingest-related packets:", ingest_packets))
+        lines.append("")
+        lines.extend(format_packet_list("Active/Review packets:", active_review_packets))
+
+    elif agent_name == "documentation":
+        complete_review_packets = matching_packets(statuses={"complete", "review"})
+        missing_summary = [
+            packet
+            for packet in packets
+            if not packet.get("summary") or not str(packet.get("summary")).strip()
+        ]
+        report_candidates = [
+            packet
+            for packet in packets
+            if packet.get("summary") and packet.get("status") in {"active", "review", "complete"}
+        ]
+
+        lines.extend(format_packet_list("Complete/Review packets:", complete_review_packets))
+        lines.append("")
+        lines.extend(format_packet_list("Packets missing summaries:", missing_summary))
+        lines.append("")
+        lines.extend(format_packet_list("Candidates for reports:", report_candidates))
+
+    return lines
 
 
 def agent_list(_args=None):
@@ -316,98 +428,22 @@ def agent_brief(args):
         return
 
     packets = packet_data.get("packets", [])
-    current_mode = mode_data.get("current", "unknown")
-    active_review_statuses = {"active", "review"}
+    write = getattr(args, "write", False)
+    all_agents = ["operator", "librarian", "ingest", "documentation"]
+    targets = all_agents if agent_name == "all" else [agent_name]
 
-    def matching_packets(types=None, statuses=None):
-        result = []
-        for packet in packets:
-            if types and packet.get("packet_type") not in types:
-                continue
-            if statuses and packet.get("status") not in statuses:
-                continue
-            result.append(packet)
-        return result
+    for idx, target in enumerate(targets):
+        lines = _build_agent_brief(target, mode_data, packets)
+        print("\n".join(lines))
+        if write:
+            write_agent_brief(target, lines)
+        if idx != len(targets) - 1:
+            print("")
 
-    def print_packet_list(title, packet_list):
-        print(f"{title}")
-        if not packet_list:
-            print("- None")
-            return
-        for packet in packet_list:
-            print(f"  {packet.get('packet_id', 'UNKNOWN')} | {packet.get('title', '')} | {packet.get('status', '')} | {packet.get('packet_type', '')}")
 
-    if agent_name == "operator":
-        active_review_packets = matching_packets(statuses=active_review_statuses)
-        blocked_packets = matching_packets(statuses={"blocked"})
-        next_actions = [
-            action
-            for packet in active_review_packets
-            for action in (packet.get("next_actions") or [])
-        ]
-
-        print("OPERATOR BRIEF")
-        print(f"Current mode: {current_mode}")
-        print("")
-        print_packet_list("Active/Review packets:", active_review_packets)
-        print("")
-        print_packet_list("Blocked packets:", blocked_packets)
-        print("")
-        print("Suggested next action:")
-        if next_actions:
-            for idx, action in enumerate(next_actions[:5], start=1):
-                print(f"- {action}")
-        else:
-            print("- No next actions found for active/review packets.")
-
-    elif agent_name == "librarian":
-        archive_types = {"nas", "archive", "research", "system"}
-        subject_packets = matching_packets(types=archive_types)
-        review_packets = matching_packets(statuses={"review"})
-
-        print("LIBRARIAN BRIEF")
-        print("Archive safety doctrine:")
-        print("- Preserve original materials and source copies.")
-        print("- Prefer immutable, verified archive paths for critical content.")
-        print("- Escalate review items before archive actions.")
-        print("")
-        print_packet_list("Archive-related packets:", subject_packets)
-        print("")
-        print_packet_list("Packets needing review:", review_packets)
-
-    elif agent_name == "ingest":
-        ingest_types = {"ingest", "component", "photo", "document", "visual"}
-        ingest_packets = matching_packets(types=ingest_types)
-        active_review_packets = matching_packets(statuses=active_review_statuses)
-
-        print("INGEST BRIEF")
-        print_packet_list("Ingest-related packets:", ingest_packets)
-        print("")
-        print_packet_list("Active/Review packets:", active_review_packets)
-
-    elif agent_name == "documentation":
-        complete_review_packets = matching_packets(statuses={"complete", "review"})
-        missing_summary = [
-            packet
-            for packet in packets
-            if not packet.get("summary") or not str(packet.get("summary")).strip()
-        ]
-        report_candidates = [
-            packet
-            for packet in packets
-            if packet.get("summary") and packet.get("status") in {"active", "review", "complete"}
-        ]
-
-        print("DOCUMENTATION BRIEF")
-        print_packet_list("Complete/Review packets:", complete_review_packets)
-        print("")
-        print_packet_list("Packets missing summaries:", missing_summary)
-        print("")
-        print_packet_list("Candidates for reports:", report_candidates)
-
-    else:
-        print(f"Unknown agent: {agent_name}")
-        print("Use: laia agent list")
+def build_packet_id(title: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"packet-{timestamp}-{slugify(title)}"
 
 
 def build_packet_id(title: str) -> str:
@@ -5528,7 +5564,8 @@ def main():
     agent_list_p.set_defaults(func=agent_list)
 
     agent_brief_p = agent_sub.add_parser("brief")
-    agent_brief_p.add_argument("agent_name", choices=["operator", "librarian", "ingest", "documentation"])
+    agent_brief_p.add_argument("agent_name", choices=["operator", "librarian", "ingest", "documentation", "all"])
+    agent_brief_p.add_argument("--write", action="store_true", dest="write")
     agent_brief_p.set_defaults(func=agent_brief)
 
     # Mode management
