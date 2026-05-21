@@ -1738,6 +1738,187 @@ def personal_os_sync_obsidian(_args=None):
     print(f"Exported personal-os state to vault: {vault_root}")
 
 
+def get_personal_os_log_path(date_str: str) -> Path:
+    return get_personal_os_vault_root() / "06_LOGS" / f"{date_str}.md"
+
+
+def get_personal_os_report_files() -> list[Path]:
+    report_dir = get_personal_os_vault_root() / "05_REPORTS"
+    if not report_dir.exists():
+        return []
+    return sorted(report_dir.glob("*.md"))
+
+
+def get_personal_os_agent_brief_files() -> list[Path]:
+    system_dir = get_personal_os_vault_root() / "07_SYSTEM"
+    if not system_dir.exists():
+        return []
+    return sorted(system_dir.glob("agent-*.md"))
+
+
+def get_personal_os_tasks() -> list[dict]:
+    tasks_dir = get_personal_os_vault_root() / "03_TASKS"
+    if not tasks_dir.exists():
+        return []
+
+    tasks = []
+    for task_path in sorted(tasks_dir.glob("*.md")):
+        fm, _ = load_frontmatter(task_path)
+        state = (fm.get("state") or "open").strip()
+        state_low = state.lower()
+        if state_low in {"done", "completed", "closed", "cancelled", "canceled", "resolved"}:
+            continue
+        title = fm.get("title") or task_path.stem
+        tasks.append({"path": task_path, "title": title, "state": state or "open"})
+    return tasks
+
+
+def get_daily_brief_path() -> Path:
+    system_dir = get_personal_os_vault_root() / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "daily-briefing.md"
+
+
+def _format_brief_packet_row(packet: dict) -> str:
+    return (
+        f"- {packet.get('packet_id', 'UNKNOWN')} | {packet.get('title', '')} | "
+        f"{packet.get('packet_type', '')} | {packet.get('status', '')} | {packet.get('project', '')}"
+    )
+
+
+def _format_file_link(prefix: str, path: Path) -> str:
+    return f"- [[{prefix}/{path.stem}]]"
+
+
+def _build_personal_os_brief(date_str: str, mode_data: dict, packets: list[dict], tasks: list[dict], reports: list[Path], agent_briefs: list[Path]) -> list[str]:
+    lines = [f"# LAIA Daily Briefing — {date_str}", ""]
+
+    current_mode = mode_data.get("current", "unknown")
+    current_reason = mode_data.get("reason", "")
+    lines.extend([
+        "## Current Mode",
+        "",
+        f"- Mode: `{current_mode}`",
+        f"- Reason: `{current_reason}`",
+        "",
+    ])
+
+    log_path = get_personal_os_log_path(date_str)
+    lines.extend(["## Today’s Log", ""])
+    if log_path.exists():
+        lines.append(f"- [[06_LOGS/{date_str}]]")
+    else:
+        lines.append(f"- No log found for today. Create it at `06_LOGS/{date_str}.md`.")
+    lines.append("")
+
+    active_review_packets = [p for p in packets if p.get("status") in {"active", "review"}]
+    blocked_packets = [p for p in packets if p.get("status") == "blocked"]
+
+    lines.extend(["## Active / Review Packets", ""])
+    if active_review_packets:
+        for packet in active_review_packets:
+            lines.append(_format_brief_packet_row(packet))
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    lines.extend(["## Blocked Packets", ""])
+    if blocked_packets:
+        for packet in blocked_packets:
+            lines.append(_format_brief_packet_row(packet))
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    lines.extend(["## Open Tasks", ""])
+    if tasks:
+        for task in tasks:
+            lines.append(f"- [[03_TASKS/{task['path'].stem}]] — {task['title']} ({task['state']})")
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    lines.extend(["## Reports", ""])
+    if reports:
+        for report in reports:
+            lines.append(f"- [[05_REPORTS/{report.stem}]]")
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    lines.extend(["## Agent Notes", ""])
+    if agent_briefs:
+        for brief in agent_briefs:
+            lines.append(f"- [[07_SYSTEM/{brief.stem}]]")
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    suggestions = []
+    for packet in active_review_packets:
+        for action in packet.get("next_actions") or []:
+            if action and len(suggestions) < 3:
+                suggestions.append(f"Review next action for {packet.get('packet_id')}: {action}")
+    if len(suggestions) < 3 and tasks:
+        for task in tasks:
+            suggestions.append(f"Work on task [[03_TASKS/{task['path'].stem}]]")
+            if len(suggestions) >= 3:
+                break
+    if len(suggestions) < 3 and reports:
+        suggestions.append(f"Review report [[05_REPORTS/{reports[0].stem}]]")
+    while len(suggestions) < 3:
+        if not suggestions:
+            suggestions.append("Review active packet statuses and update next actions.")
+        elif len(suggestions) == 1:
+            suggestions.append("Update the daily log with any new observations.")
+        else:
+            suggestions.append("Check agent notes and incorporate any new guidance.")
+
+    lines.extend(["## Suggested Next Actions", ""])
+    for suggestion in suggestions[:3]:
+        lines.append(f"- {suggestion}")
+
+    return lines
+
+
+def personal_os_briefing(args):
+    date_str = date.today().isoformat()
+    mode_data, mode_path = read_mode_state()
+    packet_data, packet_path = read_packet_index_file()
+
+    if mode_data is None:
+        print(f"Mode state missing: {mode_path}")
+        print("Run: laia personal-os init")
+        mode_data = {}
+    if packet_data is None:
+        print(f"Packet index missing: {packet_path}")
+        print("Run: laia personal-os init")
+        packet_data = {"packets": []}
+
+    packets = packet_data.get("packets", []) if isinstance(packet_data, dict) else []
+    tasks = get_personal_os_tasks()
+    reports = get_personal_os_report_files()
+    agent_briefs = get_personal_os_agent_brief_files()
+    lines = _build_personal_os_brief(date_str, mode_data or {}, packets, tasks, reports, agent_briefs)
+
+    if args.write:
+        brief_path = get_daily_brief_path()
+        write_markdown_with_frontmatter(
+            brief_path,
+            {
+                "type": "daily_briefing",
+                "date": date_str,
+                "mode": mode_data.get("current", "unknown") if isinstance(mode_data, dict) else "unknown",
+                "status": "active",
+                "updated": datetime.now().isoformat(),
+            },
+            lines,
+        )
+        print(f"Wrote daily briefing: {brief_path}")
+    else:
+        print("\n".join(lines))
+
+
 def _mode_path() -> Path:
     state_dir = LAIA_ROOT / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -5645,6 +5826,10 @@ def main():
 
     personal_os_sync_obsidian_p = personal_os_sub.add_parser("sync-obsidian")
     personal_os_sync_obsidian_p.set_defaults(func=personal_os_sync_obsidian)
+
+    personal_os_briefing_p = personal_os_sub.add_parser("briefing")
+    personal_os_briefing_p.add_argument("--write", action="store_true", dest="write")
+    personal_os_briefing_p.set_defaults(func=personal_os_briefing)
 
     packet_p = sub.add_parser("packet")
     packet_sub = packet_p.add_subparsers(dest="subcommand")
