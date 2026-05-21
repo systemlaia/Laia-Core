@@ -281,6 +281,126 @@ def read_packet_index_file():
     return data, index_path
 
 
+def get_report_vault_dir() -> Path:
+    vault_root = get_personal_os_vault_root()
+    report_dir = vault_root / "05_REPORTS"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir
+
+
+def get_report_path(report_id: str) -> Path:
+    return get_report_vault_dir() / f"{report_id}.md"
+
+
+def build_report_id(title: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    slug = slugify(title)[:50]
+    return f"report-{timestamp}-{slug}"
+
+
+def report_create(args):
+    packet_id = args.packet_id
+    packet, _ = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    report_id = build_report_id(packet.get("title") or packet_id)
+    report_path = get_report_path(report_id)
+    if report_path.exists():
+        print(f"Report already exists: {report_path}")
+        return
+
+    created_at = datetime.now().isoformat()
+    frontmatter = {
+        "type": "report",
+        "report_id": report_id,
+        "source_packet": packet_id,
+        "packet_type": packet.get("packet_type", ""),
+        "project": packet.get("project", ""),
+        "status": "draft",
+        "created": created_at,
+        "updated": created_at,
+    }
+
+    packet_summary = packet.get("summary") or "No summary available yet."
+    next_actions = packet.get("next_actions") or []
+    source_paths = packet.get("source_paths") or []
+
+    body_lines = [
+        f"# Report: {packet.get('title', packet_id)}",
+        "",
+        "## Overview",
+        "",
+        packet_summary,
+        "",
+        "## Source Packet",
+        "",
+        f"- Packet ID: `{packet_id}`",
+        f"- Type: `{packet.get('packet_type', '')}`",
+        f"- Status: `{packet.get('status', '')}`",
+        f"- Project: `{packet.get('project', '')}`",
+        "",
+        "## Work Completed",
+        "-",
+        "",
+        "## Observations",
+        "-",
+        "",
+        "## Decisions",
+        "-",
+        "",
+        "## Next Actions",
+        "",
+    ]
+    if next_actions:
+        for action in next_actions:
+            body_lines.append(f"- {action}")
+    else:
+        body_lines.append("- None yet")
+    body_lines.extend([
+        "",
+        "## Evidence / Source Paths",
+        "",
+    ])
+    if source_paths:
+        for path in source_paths:
+            body_lines.append(f"- {path}")
+    else:
+        body_lines.append("- None yet")
+
+    body_lines.extend([
+        "",
+        "## Reuse Potential",
+        "-",
+        "",
+        "## Notes",
+        "-",
+    ])
+
+    write_markdown_with_frontmatter(report_path, frontmatter, body_lines)
+    print(f"Created report: {report_path}")
+
+
+def report_list(_args=None):
+    report_dir = get_report_vault_dir()
+    reports = sorted(report_dir.glob("*.md"))
+    if not reports:
+        print(f"No reports found in: {report_dir}")
+        return
+    print("Reports:")
+    for report in reports:
+        print(f"- {report.stem}")
+
+
+def report_show(args):
+    report_path = get_report_path(args.report_id)
+    if not report_path.exists():
+        print(f"Report not found: {report_path}")
+        return
+    print(report_path.read_text(encoding="utf-8"))
+
+
 def get_agent_brief_path(agent_name: str) -> Path:
     vault_root = get_personal_os_vault_root()
     system_dir = vault_root / "07_SYSTEM"
@@ -5567,6 +5687,20 @@ def main():
     agent_brief_p.add_argument("agent_name", choices=["operator", "librarian", "ingest", "documentation", "all"])
     agent_brief_p.add_argument("--write", action="store_true", dest="write")
     agent_brief_p.set_defaults(func=agent_brief)
+
+    report_p = sub.add_parser("report")
+    report_sub = report_p.add_subparsers(dest="subcommand")
+
+    report_create_p = report_sub.add_parser("create")
+    report_create_p.add_argument("packet_id")
+    report_create_p.set_defaults(func=report_create)
+
+    report_list_p = report_sub.add_parser("list")
+    report_list_p.set_defaults(func=report_list)
+
+    report_show_p = report_sub.add_parser("show")
+    report_show_p.add_argument("report_id")
+    report_show_p.set_defaults(func=report_show)
 
     # Mode management
     mode_p = sub.add_parser("mode")
