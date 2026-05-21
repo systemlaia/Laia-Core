@@ -965,17 +965,18 @@ def personal_os_init(_args=None):
     packets_index_md = packets_dir / "index.md"
     personal_md = vault_dashboard_dir / "personal-os.md"
 
+    default_modes = [
+        "idle",
+        "planning",
+        "focus",
+        "capture",
+        "review",
+        "maintenance",
+        "field",
+        "offline",
+    ]
+
     if not mode_path.exists():
-        default_modes = [
-            "idle",
-            "planning",
-            "focus",
-            "capture",
-            "review",
-            "maintenance",
-            "field",
-            "offline",
-        ]
         mode_path.write_text(
             json.dumps({
                 "current": "unknown",
@@ -987,7 +988,21 @@ def personal_os_init(_args=None):
         )
         print(f"Created: {mode_path}")
     else:
-        print(f"Exists: {mode_path}")
+        # Backfill available_modes if missing, preserving current fields
+        try:
+            existing = json.loads(mode_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                existing = {}
+        except Exception:
+            existing = {}
+
+        if "available_modes" not in existing:
+            existing["available_modes"] = default_modes
+            # Preserve current, reason, set_at if present; write back
+            mode_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            print(f"Updated (backfilled available_modes): {mode_path}")
+        else:
+            print(f"Exists: {mode_path}")
 
     if not core_memory.exists():
         core_memory.write_text("# Core Memory\n\n", encoding="utf-8")
