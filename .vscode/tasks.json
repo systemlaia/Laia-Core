@@ -5,16 +5,27 @@
       "label": "FIELD: Status",
       "type": "shell",
       "command": "echo '== FIELD NODE ==' && docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' && echo '\\n== DOCKER DISK ==' && docker system df && echo '\\n== NAS ==' && ls -ld /Volumes/Public 2>/dev/null || echo 'NAS: OFFLINE'",
-      "group": { "kind": "build", "isDefault": true },
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
       "problemMatcher": []
     },
     {
       "label": "FIELD: Up",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && docker compose -f docker-compose.ops.yml up -d homepage filebrowser portainer",
+      "command": "cd /Users/paulroberson/LAIA/core && docker compose -f docker-compose.ops.yml up -d homepage filebrowser portainer",
       "group": "build",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
@@ -22,7 +33,11 @@
       "type": "shell",
       "command": "docker stop laia-homepage laia-filebrowser laia-portainer",
       "group": "build",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
@@ -30,21 +45,33 @@
       "type": "shell",
       "command": "docker logs -f --tail=100 laia-homepage & docker logs -f --tail=100 laia-filebrowser & docker logs -f --tail=100 laia-portainer",
       "isBackground": true,
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
       "label": "AI LOCAL: Up",
       "type": "shell",
       "command": "docker start laia-ollama laia-open-webui",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
       "label": "AI LOCAL: Down",
       "type": "shell",
       "command": "docker stop laia-ollama laia-open-webui",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
@@ -52,101 +79,211 @@
       "type": "shell",
       "command": "docker logs -f --tail=100 laia-ollama & docker logs -f --tail=100 laia-open-webui",
       "isBackground": true,
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
       "label": "OLLAMA: Pull Standard Models",
       "type": "shell",
       "command": "docker exec -it laia-ollama ollama pull llama3 && docker exec -it laia-ollama ollama pull mistral && docker exec -it laia-ollama ollama pull qwen2.5:7b && docker exec -it laia-ollama ollama pull phi4-mini && docker exec -it laia-ollama ollama pull llava",
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
       "label": "NAS: Check Mount",
       "type": "shell",
       "command": "echo '== NAS ==' && mount | grep -iE 'smb|Public|192.168.1.144' || true && echo '\\n== /Volumes/Public ==' && ls -la /Volumes/Public 2>/dev/null || echo 'NAS Public not mounted'",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
       "problemMatcher": []
     },
     {
       "label": "NAS: Open Public",
       "type": "shell",
       "command": "open /Volumes/Public",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
       "label": "CORE REMOTE: SSH Mini",
       "type": "shell",
       "command": "ssh iv@Pauls-Mac-mini.local",
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
       "problemMatcher": []
     },
     {
       "label": "CORE REMOTE: Check Mini",
       "type": "shell",
       "command": "ssh iv@Pauls-Mac-mini.local 'hostname; uptime; docker ps --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"'",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "CORE REMOTE: Git Status Mini",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local 'cd ~/Projects/Laia-Core && git status -sb'",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
       "problemMatcher": []
     },
     {
       "label": "CORE REMOTE: Open Mini Homepage",
       "type": "shell",
       "command": "open http://Pauls-Mac-mini.local:4001",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
-      "label": "SERVICES: Open Homepage",
+      "label": "COMFYUI MINI: Start",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local 'cd ~/Projects/Laia-Core/services/visual/ComfyUI && source .venv/bin/activate && python main.py --listen 0.0.0.0 --port 8188 --enable-manager'",
+      "isBackground": true,
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated",
+        "showReuseMessage": true,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "COMFYUI MINI: Stop",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local 'pkill -f \"python main.py\" || true'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "COMFYUI MINI: Check API",
+      "type": "shell",
+      "command": "ssh iv@Pauls-Mac-mini.local 'cd ~/Projects/Laia-Core && source .venv/bin/activate && python3 services/visual/comfy_client.py ping && python3 services/visual/comfy_client.py stats'",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "COMFYUI MINI: Open UI",
+      "type": "shell",
+      "command": "open http://Pauls-Mac-mini.local:8188",
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "SERVICES: Open Homepage Local",
       "type": "shell",
       "command": "open http://localhost:4001",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
-      "label": "SERVICES: Open WebUI",
+      "label": "SERVICES: Open WebUI Local",
       "type": "shell",
       "command": "open http://localhost:3000",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
-      "label": "SERVICES: Open Filebrowser",
+      "label": "SERVICES: Open Filebrowser Local",
       "type": "shell",
       "command": "open http://localhost:8081",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
-      "label": "SERVICES: Open Portainer",
+      "label": "SERVICES: Open Portainer Local",
       "type": "shell",
       "command": "open https://localhost:9443",
-      "presentation": { "reveal": "never", "panel": "shared" },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
       "problemMatcher": []
     },
     {
-      "label": "GIT: Status",
+      "label": "GIT: Status Local",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && git status -sb",
+      "command": "cd /Users/paulroberson/LAIA/core && git status -sb",
       "group": "test",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
       "problemMatcher": []
     },
     {
-      "label": "GIT: Pull",
+      "label": "GIT: Pull Local",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && git pull --rebase origin main",
+      "command": "cd /Users/paulroberson/LAIA/core && git pull --rebase origin main",
       "group": "test",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     },
     {
-      "label": "GIT: Push",
+      "label": "GIT: Push Local",
       "type": "shell",
-      "command": "cd /Users/paulroberson/Laia-Core && git push origin main",
+      "command": "cd /Users/paulroberson/LAIA/core && git push origin main",
       "group": "test",
-      "presentation": { "reveal": "always", "panel": "shared", "clear": false },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
       "problemMatcher": []
     }
   ]

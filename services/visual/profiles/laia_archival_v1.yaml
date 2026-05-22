@@ -1,6 +1,8 @@
 name: laia_archival_v1
 description: Archival documentation, clean composition, realistic materials.
 
+workflow: api/flux_text_to_image_api.json
+
 checkpoint: juggernautXL.safetensors
 
 positive:
