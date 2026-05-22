@@ -1784,6 +1784,247 @@ def paths_write_map(_args=None):
     print(f"Wrote path map: {path_map}")
 
 
+def get_archive_root(args=None) -> Path:
+    if args is not None and getattr(args, "root", None):
+        return Path(args.root).expanduser()
+    archive_root = os.environ.get("LAIA_ARCHIVE_ROOT")
+    if archive_root:
+        return Path(archive_root).expanduser()
+    return Path(os.path.expanduser("~/LAIA_ARCHIVE"))
+
+
+def get_librarian_manifest_dir() -> Path:
+    return LAIA_ROOT / "manifests" / "librarian"
+
+
+def get_latest_manifest_paths() -> tuple[Path, Path]:
+    manifest_dir = get_librarian_manifest_dir()
+    return (
+        manifest_dir / "manifest-latest.json",
+        manifest_dir / "manifest-latest.md",
+    )
+
+
+def format_bytes(size: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
+
+def scan_archive_root(root: Path) -> dict:
+    ignored_names = {
+        ".git",
+        ".DS_Store",
+        ".Trash",
+        ".TemporaryItems",
+        "@Recycle",
+        "@Recently-Snapshot",
+        "__pycache__",
+    }
+    if not root.exists():
+        return {
+            "generated_at": datetime.now().isoformat(),
+            "root": str(root),
+            "file_count": 0,
+            "total_bytes": 0,
+            "extensions": [],
+            "files": [],
+        }
+
+    files = []
+    extension_counts = {}
+    total_bytes = 0
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in ignored_names]
+        for filename in filenames:
+            if filename in ignored_names:
+                continue
+            path = Path(dirpath) / filename
+            if any(part in ignored_names for part in path.parts):
+                continue
+            try:
+                stat = path.stat()
+            except (OSError, PermissionError):
+                continue
+            relative_path = path.relative_to(root)
+            extension = path.suffix.lower() or ""
+            files.append({
+                "path": str(path),
+                "relative_path": str(relative_path),
+                "name": path.name,
+                "extension": extension,
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+            total_bytes += stat.st_size
+            extension_counts[extension] = extension_counts.get(extension, 0) + 1
+
+    manifest = {
+        "generated_at": datetime.now().isoformat(),
+        "root": str(root),
+        "file_count": len(files),
+        "total_bytes": total_bytes,
+        "extensions": sorted(extension_counts.keys()),
+        "files": sorted(files, key=lambda item: item["relative_path"]),
+    }
+    return manifest
+
+
+def write_librarian_manifest_files(manifest: dict) -> tuple[Path, Path]:
+    manifest_dir = get_librarian_manifest_dir()
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    latest_json, latest_md = get_latest_manifest_paths()
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamped_json = manifest_dir / f"manifest-{timestamp}.json"
+    timestamped_md = manifest_dir / f"manifest-{timestamp}.md"
+
+    json_text = json.dumps(manifest, indent=2)
+    latest_json.write_text(json_text + "\n", encoding="utf-8")
+    timestamped_json.write_text(json_text + "\n", encoding="utf-8")
+
+    md_lines = [
+        "# Librarian Manifest",
+        "",
+        f"Generated at: `{manifest['generated_at']}`",
+        f"Root: `{manifest['root']}`",
+        f"File count: `{manifest['file_count']}`",
+        f"Total bytes: `{manifest['total_bytes']}`",
+        "",
+        "## Extensions",
+        "",
+    ]
+    if manifest["extensions"]:
+        for ext in manifest["extensions"]:
+            md_lines.append(f"- `{ext or '<none>'}`")
+    else:
+        md_lines.append("- None")
+    md_lines.extend([
+        "",
+        "## Files",
+        "",
+        "| Path | Relative Path | Name | Extension | Size | Modified |",
+        "|---|---|---|---|---|---|",
+    ])
+    for file_record in manifest["files"][:100]:
+        md_lines.append(
+            "| {} | {} | {} | {} | {} | {} |".format(
+                file_record["path"],
+                file_record["relative_path"],
+                file_record["name"],
+                file_record["extension"],
+                format_bytes(file_record["size_bytes"]),
+                file_record["modified_at"],
+            )
+        )
+    if len(manifest["files"]) > 100:
+        md_lines.append("\n...more files available in JSON manifest...")
+
+    md_text = "\n".join(md_lines).strip() + "\n"
+    latest_md.write_text(md_text, encoding="utf-8")
+    timestamped_md.write_text(md_text, encoding="utf-8")
+    return latest_json, latest_md
+
+
+def load_latest_librarian_manifest() -> dict | None:
+    latest_json, _ = get_latest_manifest_paths()
+    return load_json_file(latest_json)
+
+
+def librarian_scan(args):
+    root = get_archive_root(args)
+    if not root.exists():
+        print(f"Archive root does not exist: {root}")
+        return
+
+    manifest = scan_archive_root(root)
+    if getattr(args, "dry_run", False):
+        print("\nLIBRARIAN SCAN (dry run)\n")
+        print(f"Archive root: {root}")
+        print(f"File count: {manifest['file_count']}")
+        print(f"Total bytes: {format_bytes(manifest['total_bytes'])}")
+        top_extensions = sorted(
+            [ext for ext in manifest["extensions"] if ext],
+            key=lambda x: x,
+        )
+        if top_extensions:
+            print("Extensions:")
+            for ext in top_extensions[:10]:
+                print(f"- {ext}")
+        else:
+            print("Extensions: none")
+        return
+
+    latest_json, latest_md = write_librarian_manifest_files(manifest)
+    print("\nLIBRARIAN SCAN\n")
+    print(f"Wrote manifest: {latest_json}")
+    print(f"Wrote manifest summary: {latest_md}")
+
+
+def librarian_find(args):
+    query = " ".join(args.query).strip().lower()
+    manifest = load_latest_librarian_manifest()
+    if not manifest:
+        print("No manifest found. Run: laia librarian scan")
+        return
+
+    matches = []
+    for file_record in manifest.get("files", []):
+        if query in file_record.get("relative_path", "").lower() or query in file_record.get("name", "").lower():
+            matches.append(file_record)
+            if len(matches) >= 25:
+                break
+
+    if not matches:
+        print(f"No results for query: {query}")
+        return
+
+    print(f"\nLIBRARIAN FIND — {len(matches)} result(s)\n")
+    for file_record in matches:
+        print(f"- {file_record['relative_path']} ({format_bytes(file_record['size_bytes'])})")
+
+
+def librarian_packet(args):
+    query = " ".join(args.query).strip().lower()
+    manifest = load_latest_librarian_manifest()
+    if not manifest:
+        print("No manifest found. Run: laia librarian scan")
+        return
+
+    matches = []
+    for file_record in manifest.get("files", []):
+        if query in file_record.get("relative_path", "").lower() or query in file_record.get("name", "").lower():
+            matches.append(file_record)
+
+    if not matches:
+        print(f"No files matched query: {query}")
+        return
+
+    title = f"Librarian retrieval: {query}"
+    packet_id = build_packet_id(title)
+    index = load_packet_index()
+    packet = {
+        "packet_id": packet_id,
+        "title": title,
+        "packet_type": "librarian",
+        "status": "review",
+        "project": "librarian",
+        "created": datetime.now().isoformat(),
+        "updated": datetime.now().isoformat(),
+        "summary": f"Retrieval packet for query: {query}",
+        "source_paths": [file_record["path"] for file_record in matches],
+        "next_actions": [],
+    }
+    index.setdefault("packets", []).append(packet)
+    save_packet_index(index)
+    write_packet_note(packet)
+
+    print(f"Created librarian packet: {packet_id}")
+    print(f"Matched files: {len(matches)}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -4820,7 +5061,7 @@ def nodes_capabilities(_args=None):
         print("")
 
 
-def librarian_status(_args=None):
+def librarian_status(args=None):
     print("\nLAIA LIBRARIAN STATUS\n")
 
     packet_index = LAIA_ROOT / "index" / "packets" / "packet_index.json"
@@ -4852,6 +5093,22 @@ def librarian_status(_args=None):
     print(f"Packets indexed:    {packet_count}")
     print(f"Provenance logs:   {provenance_count}")
     print(f"Registered nodes:  {node_count}")
+    print("")
+
+    root = get_archive_root(args)
+    manifest = load_latest_librarian_manifest()
+    latest_json, _ = get_latest_manifest_paths()
+
+    print("ARCHIVE INDEX STATUS")
+    print(f"Archive root: {root}")
+    print(f"Exists: {'yes' if root.exists() else 'no'}")
+    if latest_json.exists():
+        file_count = manifest.get("file_count") if isinstance(manifest, dict) else None
+        print(f"Latest manifest: {latest_json}")
+        print(f"Latest manifest file count: {file_count if file_count is not None else 'unknown'}")
+    else:
+        print("Latest manifest: none")
+        print("Latest manifest file count: none")
     print("")
 
 
@@ -7060,7 +7317,21 @@ def main():
     librarian_sub = librarian_p.add_subparsers(dest="subcommand")
 
     librarian_status_p = librarian_sub.add_parser("status")
+    librarian_status_p.add_argument("--root", dest="root", help="Archive root path")
     librarian_status_p.set_defaults(func=librarian_status)
+
+    librarian_scan_p = librarian_sub.add_parser("scan")
+    librarian_scan_p.add_argument("--dry-run", action="store_true", dest="dry_run")
+    librarian_scan_p.add_argument("--root", dest="root", help="Archive root path")
+    librarian_scan_p.set_defaults(func=librarian_scan)
+
+    librarian_find_p = librarian_sub.add_parser("find")
+    librarian_find_p.add_argument("query", nargs="+", help="Search query")
+    librarian_find_p.set_defaults(func=librarian_find)
+
+    librarian_packet_p = librarian_sub.add_parser("packet")
+    librarian_packet_p.add_argument("query", nargs="+", help="Packet query")
+    librarian_packet_p.set_defaults(func=librarian_packet)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
