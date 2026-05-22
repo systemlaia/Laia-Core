@@ -275,6 +275,50 @@
       "problemMatcher": []
     },
     {
+      "label": "NAS: Mount Public",
+      "type": "shell",
+      "command": "open smb://192.168.1.144/Public",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "NAS: Librarian Dry Run",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && source .venv/bin/activate && LAIA_ARCHIVE_ROOT=/Volumes/Public python cli/laia.py librarian scan --dry-run",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "NAS: Librarian Scan",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && source .venv/bin/activate && LAIA_ARCHIVE_ROOT=/Volumes/Public python cli/laia.py librarian scan",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "NAS: Librarian Report",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && source .venv/bin/activate && LAIA_ARCHIVE_ROOT=/Volumes/Public python cli/laia.py librarian report",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "GIT: Push Local",
       "type": "shell",
       "command": "cd /Users/paulroberson/LAIA/core && git push origin main",
