@@ -1929,6 +1929,174 @@ def mode_list(_args=None):
     path = _mode_path()
     if not path.exists():
         print("No mode state found. Run: laia personal-os init or set a mode.")
+
+
+def personal_os_validate_phase2(args):
+    """Validate Phase 2 readiness for LAIA Personal OS.
+
+    Reads LAIA_ROOT state and packet index, checks vault structure and
+    key sync files. If --write is set, writes a validation report
+    to the Blue Book vault under `05_REPORTS/phase-2-validation-report.md`.
+    """
+    vault_root = get_personal_os_vault_root()
+    checks = []  # list of (check_name, status, detail)
+
+    # 1. mode.json
+    mode_path = LAIA_ROOT / "state" / "mode.json"
+    mode = load_json_file(mode_path)
+    if not mode or not isinstance(mode, dict):
+        checks.append(("mode.json", "FAIL", f"Missing or invalid: {mode_path}"))
+    else:
+        required_keys = ["current", "reason", "set_at", "available_modes"]
+        missing = [k for k in required_keys if k not in mode]
+        if missing:
+            checks.append(("mode.json", "WARN", f"Missing keys: {', '.join(missing)}"))
+        else:
+            checks.append(("mode.json", "PASS", "OK"))
+
+    # 2. packets/index.json
+    packet_index = load_packet_index()
+    packet_index_path = get_packet_index_path()
+    if not packet_index or not isinstance(packet_index, dict) or not packet_index.get("packets"):
+        checks.append(("packets/index.json", "WARN", f"Missing or empty: {packet_index_path}"))
+    else:
+        checks.append(("packets/index.json", "PASS", f"{len(packet_index.get('packets', []))} packets"))
+
+    # 3. Obsidian homepage
+    home_md = vault_root / "00_HOME" / "LAIA_HOME.md"
+    if home_md.exists():
+        checks.append(("Obsidian homepage", "PASS", str(home_md)))
+    else:
+        checks.append(("Obsidian homepage", "WARN", str(home_md)))
+
+    # 4. Blue Book folders
+    required_folders = [
+        "00_HOME", "03_TASKS", "04_PACKETS", "05_REPORTS",
+        "06_LOGS", "07_SYSTEM", "99_TEMPLATES",
+    ]
+    for f in required_folders:
+        p = vault_root / f
+        checks.append((f"vault/{f}", "PASS" if p.exists() else "WARN", str(p)))
+
+    # 5. Core sync files in 07_SYSTEM
+    system_files = [
+        "current-mode.md", "core-health.md", "daily-briefing.md",
+        "agent-operator.md", "agent-librarian.md", "agent-ingest.md", "agent-documentation.md",
+    ]
+    system_dir = vault_root / "07_SYSTEM"
+    for fn in system_files:
+        p = system_dir / fn
+        checks.append((f"07_SYSTEM/{fn}", "PASS" if p.exists() else "WARN", str(p)))
+
+    # 6. Agent brief files (already included above)
+
+    # 7. Daily briefing
+    db = system_dir / "daily-briefing.md"
+    checks.append(("daily-briefing.md", "PASS" if db.exists() else "WARN", str(db)))
+
+    # 8. Templates folder has markdown
+    templates_dir = vault_root / "99_TEMPLATES"
+    md_templates = list(templates_dir.glob("*.md")) if templates_dir.exists() else []
+    checks.append(("templates", "PASS" if md_templates else "WARN", f"{len(md_templates)} templates"))
+
+    # 9. At least one packet exists
+    packet_count = len(packet_index.get("packets", [])) if isinstance(packet_index, dict) else 0
+    checks.append(("packets exist", "PASS" if packet_count > 0 else "WARN", f"{packet_count} packets"))
+
+    # 10. At least one report exists
+    reports = get_personal_os_report_files()
+    checks.append(("reports exist", "PASS" if reports else "WARN", f"{len(reports)} reports"))
+
+    # Summarize to terminal
+    print("\nLAIA PERSONAL-OS PHASE 2 VALIDATION\n")
+    print(f"Vault: {vault_root}")
+    print("")
+    print("| Check | Status | Detail |")
+    print("|---|---:|---|")
+    for name, status, detail in checks:
+        print(f"| {name} | {status} | {detail} |")
+
+    # Built command surface
+    commands = [
+        "laia packet create/list/show/update/close",
+        "laia agent list",
+        "laia agent brief operator",
+        "laia agent brief all --write",
+        "laia report create/list/show",
+        "laia personal-os briefing",
+        "laia personal-os briefing --write",
+        "laia personal-os sync-obsidian",
+        "laia personal-os validate-phase2",
+    ]
+
+    print("\nBuilt command surface:")
+    for c in commands:
+        print(f"- {c}")
+
+    if args.write:
+        # Build report frontmatter and body
+        report_id = "phase-2-validation-report"
+        report_path = get_personal_os_vault_root() / "05_REPORTS" / f"{report_id}.md"
+        front = {
+            "type": "report",
+            "report_id": report_id,
+            "project": "LAIA Personal OS",
+            "report_type": "validation",
+            "status": "draft",
+            "created": datetime.now().isoformat(),
+            "updated": datetime.now().isoformat(),
+        }
+
+        body = []
+        body.append("# LAIA Personal OS Phase 2 Validation Report")
+        body.append("")
+        body.append("## Executive Summary")
+        body.append("Phase 2 establishes structured memory and role-based intelligence (packets, briefs, reports, daily briefing, Obsidian sync, dashboard, git-backed vault).")
+        body.append("")
+        body.append("## Phase 2 Scope")
+        for s in ["Packets","Packet lifecycle","Agent briefs","Writable agent briefs","Reports","Daily briefing","Obsidian sync","Dashboard visibility","Git audit trail"]:
+            body.append(f"- {s}")
+        body.append("")
+        body.append("## Validation Results")
+        body.append("| Check | Status | Detail |")
+        body.append("|---|---:|---|")
+        for name, status, detail in checks:
+            body.append(f"| {name} | {status} | {detail} |")
+        body.append("")
+        body.append("## Built Command Surface")
+        for c in commands:
+            body.append(f"- {c}")
+        body.append("")
+        body.append("## Source of Truth")
+        body.append("- JSON state: `LAIA_ROOT/state` and `LAIA_ROOT/packets`")
+        body.append("- Human-readable synced state: Blue Book vault")
+        body.append("- Git: repository history and audit trail")
+        body.append("")
+        body.append("## What Works Now")
+        for name, status, detail in checks:
+            if status == "PASS":
+                body.append(f"- {name}: {detail}")
+        body.append("")
+        body.append("## Gaps / Warnings")
+        for name, status, detail in checks:
+            if status in ("WARN", "FAIL"):
+                body.append(f"- {name}: {status} — {detail}")
+        body.append("")
+        body.append("## What Is Intentionally Not Automated Yet")
+        body.extend(["- archive modification","- NAS restructuring","- ingest watchers","- Home Assistant/Grocy actions","- autonomous agent actions"])
+        body.append("")
+        body.append("## Phase 3 Readiness")
+        body.append("Assess next steps toward Phase 3 based on gaps above.")
+        body.append("")
+        body.append("## Next Actions")
+        body.extend(["1. Fill missing Blue Book files listed in Gaps.", "2. Confirm ComfyUI outputs collection and integrate collector.", "3. Automate agent brief writable flows.", "4. Add monitoring for packet lifecycle events.", "5. Run full staged tests with ComfyUI live runs."])
+
+        # Ensure reports dir exists
+        report_dir = report_path.parent
+        report_dir.mkdir(parents=True, exist_ok=True)
+        write_markdown_with_frontmatter(report_path, front, body)
+        print(f"Wrote validation report: {report_path}")
+
         return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -3247,6 +3415,60 @@ def visual_profiles_dir():
     return REPO_ROOT / "services" / "visual" / "profiles"
 
 
+def visual_services_dir() -> Path:
+    return REPO_ROOT / "services" / "visual"
+
+
+def visual_comfy_dir() -> Path:
+    # Allow override to point to a different local ComfyUI install (e.g. on Mac mini)
+    env = os.environ.get("LAIA_COMFY_DIR")
+    if env:
+        return Path(env).expanduser()
+    return visual_services_dir() / "ComfyUI"
+
+
+def visual_models_dir() -> Path:
+    return visual_comfy_dir() / "models"
+
+
+def visual_workflows_dir() -> Path:
+    # Primary workflows directory inside repo; Comfy blueprints are separate
+    return visual_services_dir() / "workflows"
+
+
+def _resolve_workflow_path(profile_workflow: str, profile_name: str) -> Path:
+    """Resolve workflow path using search order described in config.
+
+    Order:
+      - absolute path if provided
+      - visual_workflows_dir() / profile_workflow
+      - visual_workflows_dir() / "api" / profile_workflow
+      - visual_comfy_dir() / "blueprints" / profile_workflow
+      - fallback: visual_workflows_dir() / f"laia_{profile_name}.json"
+    """
+    # Absolute path
+    candidate = Path(profile_workflow).expanduser()
+    if candidate.is_absolute() and candidate.exists():
+        return candidate
+
+    # repo workflows
+    w1 = visual_workflows_dir() / profile_workflow
+    if w1.exists():
+        return w1
+
+    w2 = visual_workflows_dir() / "api" / profile_workflow
+    if w2.exists():
+        return w2
+
+    w3 = visual_comfy_dir() / "blueprints" / profile_workflow
+    if w3.exists():
+        return w3
+
+    # fallback
+    fb = visual_workflows_dir() / f"laia_{profile_name}.json"
+    return fb
+
+
 def visual_status(_args=None):
     import urllib.request
 
@@ -3406,6 +3628,261 @@ Created: {datetime.now().isoformat()}
     print("")
 
 
+def _validate_safetensors_header(path: Path) -> tuple[bool, str]:
+    """
+    Validate safetensors file header.
+    Returns (is_valid, error_message).
+    """
+    try:
+        data = path.read_bytes()
+        if len(data) < 8:
+            return False, "file too small (< 8 bytes)"
+
+        # First 8 bytes are the header length in little-endian
+        header_len = int.from_bytes(data[:8], "little")
+
+        if header_len < 2:
+            return False, "invalid header length"
+
+        if 8 + header_len > len(data):
+            return False, "truncated file (header overflow)"
+
+        # Header should be valid JSON
+        try:
+            header_json = data[8:8+header_len].decode("utf-8")
+            json.loads(header_json)
+            return True, ""
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False, "invalid header JSON"
+    except Exception as e:
+        return False, str(e)
+
+
+def _inspect_workflow_json(workflow_path: Path) -> dict:
+    """
+    Parse workflow JSON and extract model/node references.
+    Returns dict with categorized requirements.
+    """
+    result = {
+        "checkpoints": set(),
+        "loras": set(),
+        "vae": set(),
+        "text_encoders": set(),
+        "controlnet": set(),
+        "diffusion_models": set(),
+        "custom_nodes": set(),
+        "unknown_nodes": set(),
+    }
+
+    try:
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"error": str(e)}
+
+    # Known ComfyUI node types that are part of core
+    core_nodes = {
+        "CheckpointLoaderSimple",
+        "CheckpointLoader",
+        "VAELoader",
+        "LoraLoader",
+        "CLIPLoader",
+        "KSampler",
+        "KSamplerAdvanced",
+        "EmptyLatentImage",
+        "LatentUpscale",
+        "VAEDecode",
+        "VAEEncode",
+        "CLIPTextEncode",
+        "ConditioningCombine",
+        "PrimitiveNode",
+    }
+
+    for node_id, node_data in workflow.items():
+        if not isinstance(node_data, dict):
+            continue
+
+        class_type = node_data.get("class_type", "")
+        inputs = node_data.get("inputs", {})
+
+        # Extract model references
+        if class_type == "CheckpointLoaderSimple" or class_type == "CheckpointLoader":
+            ckpt = inputs.get("ckpt_name", "")
+            if ckpt:
+                result["checkpoints"].add(ckpt)
+
+        elif class_type == "VAELoader":
+            vae = inputs.get("vae_name", "")
+            if vae:
+                result["vae"].add(vae)
+
+        elif class_type == "LoraLoader":
+            lora = inputs.get("lora_name", "")
+            if lora:
+                result["loras"].add(lora)
+
+        elif class_type == "CLIPLoader":
+            clip = inputs.get("clip_name", "")
+            if clip:
+                result["text_encoders"].add(clip)
+
+        # Track custom nodes
+        if class_type not in core_nodes:
+            # Split on :: to get base name
+            if "::" in class_type:
+                result["custom_nodes"].add(class_type.split("::")[0])
+            elif class_type and not class_type.startswith("_"):
+                result["custom_nodes"].add(class_type)
+
+    # Convert sets to sorted lists
+    for key in result:
+        if key != "error" and isinstance(result[key], set):
+            result[key] = sorted(result[key])
+
+    return result
+
+
+def visual_inspect_workflow(args):
+    workflow_path = Path(args.workflow_file).expanduser()
+
+    print("\nLAIA VISUAL WORKFLOW INSPECTOR\n")
+
+    if not workflow_path.exists():
+        print(f"Workflow file not found: {workflow_path}\n")
+        raise SystemExit(1)
+
+    if not workflow_path.suffix.lower() == ".json":
+        print(f"Not a JSON file: {workflow_path}\n")
+        raise SystemExit(1)
+
+    inspection = _inspect_workflow_json(workflow_path)
+
+    if "error" in inspection:
+        print(f"Failed to parse workflow: {inspection['error']}\n")
+        raise SystemExit(1)
+
+    print(f"File: {workflow_path}")
+    print("")
+
+    # Report required models
+    has_models = False
+    if inspection["checkpoints"]:
+        print("Checkpoints:")
+        for item in inspection["checkpoints"]:
+            print(f"  - {item}")
+        has_models = True
+
+    if inspection["loras"]:
+        print("LoRAs:")
+        for item in inspection["loras"]:
+            print(f"  - {item}")
+        has_models = True
+
+    if inspection["vae"]:
+        print("VAE encoders:")
+        for item in inspection["vae"]:
+            print(f"  - {item}")
+        has_models = True
+
+    if inspection["text_encoders"]:
+        print("Text encoders:")
+        for item in inspection["text_encoders"]:
+            print(f"  - {item}")
+        has_models = True
+
+    if not has_models:
+        print("No model files detected.")
+
+    print("")
+
+    # Report custom nodes
+    if inspection["custom_nodes"]:
+        print("Required custom nodes:")
+        for node in inspection["custom_nodes"]:
+            print(f"  - {node}")
+        print("")
+
+    # Estimate complexity
+    total_items = (
+        len(inspection["checkpoints"]) +
+        len(inspection["loras"]) +
+        len(inspection["vae"]) +
+        len(inspection["text_encoders"])
+    )
+
+    if total_items > 5:
+        complexity = "HIGH"
+    elif total_items > 2:
+        complexity = "MEDIUM"
+    else:
+        complexity = "LOW"
+
+    print(f"Estimated complexity: {complexity}")
+    print("")
+
+
+def visual_doctor(args):
+    models_dir = visual_models_dir()
+
+    print("\nLAIA VISUAL DOCTOR\n")
+
+    if not models_dir.exists():
+        print(f"Models directory not found: {models_dir}\n")
+        return
+
+    print(f"Scanning: {models_dir}\n")
+
+    ok_files = []
+    broken_files = []
+    warnings = []
+
+    # Scan all files recursively
+    for file_path in models_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        if file_path.suffix.lower() == ".safetensors":
+            is_valid, error_msg = _validate_safetensors_header(file_path)
+
+            if is_valid:
+                ok_files.append(file_path)
+                # Check size
+                size_gb = file_path.stat().st_size / (1024**3)
+                if size_gb > 30:
+                    warnings.append(f"{file_path.name}: {size_gb:.1f}GB (may exceed M1 Mini memory)")
+            else:
+                broken_files.append((file_path, error_msg))
+
+    # Report OK files
+    if ok_files:
+        print(f"OK: {len(ok_files)} file(s)")
+        for fpath in sorted(ok_files)[:10]:  # Show first 10
+            print(f"  ✓ {fpath.name}")
+        if len(ok_files) > 10:
+            print(f"  ... and {len(ok_files) - 10} more")
+        print("")
+
+    # Report broken files
+    if broken_files:
+        print(f"BROKEN: {len(broken_files)} file(s)")
+        for fpath, error_msg in sorted(broken_files):
+            print(f"  ✗ {fpath.name}")
+            print(f"    reason: {error_msg}")
+        print("")
+
+    # Report warnings
+    if warnings:
+        print("WARNINGS:")
+        for warning in warnings:
+            print(f"  ⚠ {warning}")
+        print("")
+
+    if not broken_files and not warnings:
+        print("All model files validated successfully.\n")
+
+    print(f"Summary: {len(ok_files)} OK, {len(broken_files)} broken")
+    print("")
+
+
 def visual_review(args):
     packet_dir = visual_packets_dir() / args.packet
     outputs_dir = packet_dir / "outputs"
@@ -3460,9 +3937,23 @@ def visual_review(args):
 
 
 def visual_generate(args):
+    # Support two modes:
+    # Mode 1 (legacy): visual generate <packet_name> [--dry-run]
+    # Mode 2 (stable): visual generate --profile <profile_name> "<prompt>" [--dry-run]
+
+    if args.profile:
+        # Mode 2: Stable generation from profile + prompt
+        return _visual_generate_from_profile(args)
+    else:
+        # Mode 1: Legacy packet-based generation
+        return _visual_generate_from_packet(args)
+
+
+def _visual_generate_from_packet(args):
+    """Legacy: Generate from an existing visual packet."""
     packet = find_packet("visual", args.packet_name)
 
-    print("\nLAIA VISUAL GENERATE\n")
+    print("\nLAIA VISUAL GENERATE (from packet)\n")
 
     if not packet:
         print("Visual packet not found. Use: laia packets list\n")
@@ -3516,9 +4007,212 @@ def visual_generate(args):
     print("Next step: wire this to services/visual/comfy_client.py after approval.\n")
 
 
-def visual_workflows_dir():
-    return REPO_ROOT / "services" / "visual" / "ComfyUI" / "blueprints"
+def _visual_generate_from_profile(args):
+    """
+    Stable generation pipeline: Load profile + prompt → create packet → queue workflow → wait → collect → review
+    """
+    import time
+    import urllib.error
 
+    profile_name = args.profile
+    prompt_text = " ".join(args.prompt).strip() if args.prompt else ""
+
+    print("\nLAIA VISUAL GENERATE (from profile)\n")
+
+    # Load profile
+    profile_path = visual_profiles_dir() / f"{profile_name}.yaml"
+
+    if not profile_path.exists():
+        print(f"Profile not found: {profile_path}\n")
+        raise SystemExit(1)
+
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+
+    if not prompt_text:
+        print("Error: Prompt is required.\n")
+        raise SystemExit(1)
+
+    print(f"Profile: {profile_name}")
+    print(f"Prompt: {prompt_text}")
+    print(f"Checkpoint: {profile.get('checkpoint', 'unknown')}")
+    print("")
+
+    if args.dry_run:
+        print("DRY RUN - No workflow will be executed.\n")
+
+    # Resolve workflow using multiple lookup locations
+    workflow_name = profile.get("workflow", f"laia_{profile_name}.json")
+    workflow_path = _resolve_workflow_path(workflow_name, profile_name)
+
+    if not workflow_path.exists():
+        print(f"Workflow not found: {workflow_path}\n")
+        raise SystemExit(1)
+
+    # Create visual packet
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = slugify(prompt_text)[:60]
+    packet_name = f"{stamp}-{slug}"
+    packet_dir = visual_packets_dir() / packet_name
+
+    try:
+        packet_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        print(f"Packet already exists: {packet_dir}\n")
+        raise SystemExit(1)
+
+    print(f"Created packet: {packet_dir.name}")
+
+    # Create packet structure
+    (packet_dir / "outputs").mkdir(parents=True, exist_ok=True)
+
+    # Save prompt and profile
+    (packet_dir / "prompt.txt").write_text(prompt_text + "\n", encoding="utf-8")
+    (packet_dir / "profile_used.yaml").write_text(profile_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # Save workflow
+    workflow_content = workflow_path.read_text(encoding="utf-8")
+    (packet_dir / "workflow_used.json").write_text(workflow_content, encoding="utf-8")
+
+    # Create manifest
+    manifest = {
+        "packet_name": packet_name,
+        "packet_path": str(packet_dir),
+        "profile": profile_name,
+        "prompt": prompt_text,
+        "workflow": workflow_name,
+        "checkpoint": profile.get("checkpoint", ""),
+        "created_at": datetime.now().isoformat(),
+        "status": "created",
+        "prompt_id": None,
+    }
+    (packet_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    print(f"Saved manifest to {packet_name}/manifest.json")
+    print("")
+
+    if args.dry_run:
+        print("Dry run complete. No workflow submitted.\n")
+        return
+
+    # Import comfy_client
+    sys.path.insert(0, str(REPO_ROOT / "services" / "visual"))
+    try:
+        from comfy_client import ComfyClient
+    except ImportError:
+        print("Error: Could not import comfy_client.\n")
+        raise SystemExit(1)
+
+    # Check ComfyUI health
+    client = ComfyClient()
+
+    try:
+        if not client.health():
+            print("Error: ComfyUI is not reachable at http://127.0.0.1:8188\n")
+            raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: Could not connect to ComfyUI: {e}\n")
+        raise SystemExit(1)
+
+    print("ComfyUI health check: OK")
+
+    # Load and inject prompt into workflow
+    try:
+        workflow = json.loads(workflow_content)
+    except json.JSONDecodeError:
+        print(f"Error: Invalid workflow JSON: {workflow_path}\n")
+        raise SystemExit(1)
+
+    # Try to inject prompt into common node positions
+    # For API workflows, typically node 6 = positive, node 7 = negative
+    positive_prompt = "\n".join(profile.get("positive", [])) + "\n" + prompt_text
+    negative_prompt = "\n".join(profile.get("negative", []))
+
+    if "6" in workflow and "inputs" in workflow["6"]:
+        workflow["6"]["inputs"]["text"] = positive_prompt.strip()
+
+    if "7" in workflow and "inputs" in workflow["7"]:
+        workflow["7"]["inputs"]["text"] = negative_prompt.strip()
+
+    print("Injected prompt into workflow")
+
+    # Queue workflow
+    try:
+        print("Queuing workflow...")
+        prompt_id = client.queue_workflow(workflow)
+        print(f"Queued with prompt_id: {prompt_id}")
+        print("")
+    except Exception as e:
+        print(f"Error: Failed to queue workflow: {e}\n")
+        raise SystemExit(1)
+
+    # Update manifest with prompt_id
+    manifest["prompt_id"] = prompt_id
+    manifest["status"] = "queued"
+    (packet_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    # Wait for completion
+    print("Waiting for ComfyUI to process...")
+    try:
+        history = client.wait_for_prompt(prompt_id, timeout_seconds=600)
+        print("Generation complete!")
+        print("")
+    except TimeoutError:
+        print("Error: Generation timed out after 10 minutes.\n")
+        manifest["status"] = "timeout"
+        (packet_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        raise SystemExit(1)
+    except Exception as e:
+        print(f"Error: Failed waiting for completion: {e}\n")
+        manifest["status"] = "error"
+        (packet_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        raise SystemExit(1)
+
+    # Save history
+    (packet_dir / "comfy_history.json").write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+
+    # TODO: Collect outputs from ComfyUI outputs directory
+    # For now, assume they are copied to packet/outputs
+    print(f"Packet ready at: {packet_dir}")
+    print("")
+
+    # Auto-run visual review
+    print("Running automatic visual review...")
+    outputs_dir = packet_dir / "outputs"
+    if outputs_dir.exists():
+        # Call visual_review logic
+        image_files = []
+        for ext in ("*.png", "*.jpg", "*.jpeg"):
+            image_files.extend(sorted(outputs_dir.glob(ext)))
+
+        if image_files:
+            review_items = []
+            for image_path in image_files:
+                # Try to run ollama review
+                try:
+                    result = subprocess.run(
+                        ["ollama", "run", "llava:latest", "Describe this image in one sentence.", str(image_path)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    caption = result.stdout.strip()
+                except Exception as e:
+                    caption = f"ERROR: {str(e)}"
+
+                review_items.append({
+                    "file": image_path.name,
+                    "caption": caption,
+                    "reviewed_by": "ollama/llava:latest",
+                })
+
+            if review_items:
+                (packet_dir / "review.json").write_text(json.dumps(review_items, indent=2) + "\n", encoding="utf-8")
+                print(f"Saved review with {len(review_items)} image(s)")
+        else:
+            print("No images found in outputs directory")
+    else:
+        print(f"No outputs directory: {outputs_dir}")
 
 def visual_generate_submit(args):
     import json
@@ -3540,7 +4234,8 @@ def visual_generate_submit(args):
     elif workflow_arg.exists():
         workflow = workflow_arg.resolve()
     else:
-        workflow = visual_workflows_dir() / args.workflow
+        # Try resolving via known workflow locations
+        workflow = _resolve_workflow_path(args.workflow, Path(args.workflow).stem)
 
     if not workflow.exists():
         print(f"Missing workflow: {workflow}\n")
@@ -4514,7 +5209,7 @@ def doctor_phase2(_args=None):
 
 
 def comfy_output_dir():
-    return REPO_ROOT / "services" / "visual" / "ComfyUI" / "output"
+    return visual_comfy_dir() / "output"
 
 
 def visual_collect(args):
@@ -5884,6 +6579,10 @@ def main():
     personal_os_briefing_p.add_argument("--write", action="store_true", dest="write")
     personal_os_briefing_p.set_defaults(func=personal_os_briefing)
 
+    personal_os_validate_p = personal_os_sub.add_parser("validate-phase2")
+    personal_os_validate_p.add_argument("--write", action="store_true", dest="write")
+    personal_os_validate_p.set_defaults(func=personal_os_validate_phase2)
+
     packet_p = sub.add_parser("packet")
     packet_sub = packet_p.add_subparsers(dest="subcommand")
 
@@ -6100,7 +6799,9 @@ def main():
     visual_packet_p.set_defaults(func=visual_packet)
 
     visual_generate_p = visual_sub.add_parser("generate")
-    visual_generate_p.add_argument("packet_name")
+    visual_generate_p.add_argument("--profile", dest="profile")
+    visual_generate_p.add_argument("--packet", dest="packet_name")
+    visual_generate_p.add_argument("prompt", nargs="*")
     visual_generate_p.add_argument("--dry-run", action="store_true")
     visual_generate_p.set_defaults(func=visual_generate)
 
@@ -6145,6 +6846,13 @@ def main():
     visual_submit_p.add_argument("workflow")
     visual_submit_p.add_argument("--dry-run", action="store_true")
     visual_submit_p.set_defaults(func=visual_generate_submit)
+
+    visual_inspect_workflow_p = visual_sub.add_parser("inspect-workflow")
+    visual_inspect_workflow_p.add_argument("workflow_file")
+    visual_inspect_workflow_p.set_defaults(func=visual_inspect_workflow)
+
+    visual_doctor_p = visual_sub.add_parser("doctor")
+    visual_doctor_p.set_defaults(func=visual_doctor)
 
 
     search_p = sub.add_parser("search")
