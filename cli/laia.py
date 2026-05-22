@@ -2025,6 +2025,86 @@ def librarian_packet(args):
     print(f"Matched files: {len(matches)}")
 
 
+def librarian_report(_args=None):
+    latest_json, _ = get_latest_manifest_paths()
+    manifest = load_latest_librarian_manifest()
+    if not latest_json.exists() or not manifest:
+        print("No Librarian manifest found. Run: laia librarian scan")
+        return
+
+    vault_root = get_blue_book_vault_root()
+    reports_dir = vault_root / "05_REPORTS"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "librarian-manifest-report.md"
+
+    front = {
+        "type": "report",
+        "report_id": "librarian-manifest-report",
+        "project": "LAIA Librarian",
+        "report_type": "manifest",
+        "status": "active",
+        "updated": datetime.now().isoformat(),
+        "archive_root": manifest.get("root"),
+        "file_count": manifest.get("file_count"),
+        "total_bytes": manifest.get("total_bytes"),
+    }
+
+    body = []
+    body.append("# Librarian Manifest Report")
+    body.append("")
+    body.append("## Summary")
+    body.append(f"- Archive root: `{manifest.get('root')}`")
+    body.append(f"- File count: `{manifest.get('file_count')}`")
+    body.append(f"- Total size: `{format_bytes(manifest.get('total_bytes', 0))}`")
+    body.append(f"- Generated: `{manifest.get('generated_at')}`")
+    body.append("")
+
+    # Top extensions with counts and bytes
+    ext_stats = {}
+    for f in manifest.get("files", []):
+        ext = f.get("extension") or ""
+        stats = ext_stats.setdefault(ext, {"count": 0, "bytes": 0})
+        stats["count"] += 1
+        stats["bytes"] += f.get("size_bytes", 0)
+
+    body.append("## Top Extensions")
+    body.append("")
+    body.append("| Extension | Count | Bytes |")
+    body.append("|---|---:|---:|")
+    for ext, stats in sorted(ext_stats.items(), key=lambda kv: kv[1]["count"], reverse=True):
+        body.append(f"| {ext or '<none>'} | {stats['count']} | {format_bytes(stats['bytes'])} |")
+    body.append("")
+
+    # Largest files
+    files = manifest.get("files", [])
+    largest = sorted(files, key=lambda x: x.get("size_bytes", 0), reverse=True)[:20]
+    body.append("## Largest Files")
+    body.append("")
+    body.append("| File | Size | Modified |")
+    body.append("|---|---:|---|")
+    for f in largest:
+        body.append(f"| {f.get('relative_path')} | {format_bytes(f.get('size_bytes',0))} | {f.get('modified_at')} |")
+    body.append("")
+
+    # Recent files
+    recent = sorted(files, key=lambda x: x.get("modified_at", ""), reverse=True)[:20]
+    body.append("## Recent Files")
+    body.append("")
+    body.append("| File | Size | Modified |")
+    body.append("|---|---:|---|")
+    for f in recent:
+        body.append(f"| {f.get('relative_path')} | {format_bytes(f.get('size_bytes',0))} | {f.get('modified_at')} |")
+    body.append("")
+
+    body.append("## Notes")
+    body.append("")
+    body.append("- This is a read-only report.")
+    body.append("- No archive originals were moved, renamed, deleted, or modified.")
+
+    write_markdown_with_frontmatter(report_path, front, body)
+    print(f"Wrote Librarian manifest report: {report_path}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -7332,6 +7412,9 @@ def main():
     librarian_packet_p = librarian_sub.add_parser("packet")
     librarian_packet_p.add_argument("query", nargs="+", help="Packet query")
     librarian_packet_p.set_defaults(func=librarian_packet)
+
+    librarian_report_p = librarian_sub.add_parser("report")
+    librarian_report_p.set_defaults(func=librarian_report)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
