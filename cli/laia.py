@@ -1644,6 +1644,146 @@ def personal_os_doctor(_args=None):
         print(f"{status}: {label} — {path}")
 
 
+def get_blue_book_vault_root() -> Path:
+    vault_path = os.environ.get("LAIA_VAULT_PATH")
+    if vault_path:
+        return Path(vault_path).expanduser()
+    return Path(os.path.expanduser("~/Documents/Blue Book"))
+
+
+def get_vault_git_remotes(vault_root: Path) -> dict:
+    git_dir = vault_root / ".git"
+    if not git_dir.exists():
+        return {}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(vault_root), "config", "--get-regexp", "^remote\\..*\\.url$"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+
+        remotes = {}
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            key, url = parts
+            if not key.startswith("remote.") or not key.endswith(".url"):
+                continue
+            remote_name = key[len("remote.") : -len(".url")]
+            remotes[remote_name] = url.strip()
+        return remotes
+    except Exception:
+        return {}
+
+
+def format_vault_git_remotes(remotes: dict) -> str:
+    if not remotes:
+        return "No remote configured"
+    return "; ".join(f"{name}: {url}" for name, url in sorted(remotes.items()))
+
+
+def paths_show(_args=None):
+    vault_root = get_blue_book_vault_root()
+    archive_duplicate = LAIA_ROOT / "archive" / "duplicate-vaults"
+    remotes = get_vault_git_remotes(vault_root)
+    git_remote_text = format_vault_git_remotes(remotes)
+
+    print("\nLAIA PATHS\n")
+    print(f"LAIA_ROOT: {LAIA_ROOT}")
+    print(f"Core repo: {REPO_ROOT}")
+    print(f"Blue Book vault: {vault_root}")
+    print(f"Packets dir: {LAIA_ROOT / 'packets'}")
+    print(f"State dir: {LAIA_ROOT / 'state'}")
+    print(f"Duplicate vault archive dir: {archive_duplicate}")
+    print(f"Local vault Git backup remote: {git_remote_text}")
+    print("")
+    print("Notes:")
+    print("- `LAIA_ROOT` is the canonical container for state and packets.")
+    print("- `LAIA_VAULT_PATH` controls the Blue Book vault location.")
+    print("- Do not duplicate vault content inside the archive path above.")
+
+
+def paths_doctor(_args=None):
+    vault_root = get_blue_book_vault_root()
+    archive_duplicate = LAIA_ROOT / "archive" / "duplicate-vaults"
+    remotes = get_vault_git_remotes(vault_root)
+
+    checks = [
+        ("LAIA_ROOT", LAIA_ROOT),
+        ("Core repo", REPO_ROOT),
+        ("Blue Book vault", vault_root),
+        ("Packets dir", LAIA_ROOT / "packets"),
+        ("State dir", LAIA_ROOT / "state"),
+        ("Duplicate vault archive dir", archive_duplicate),
+    ]
+
+    print("\nLAIA PATHS DOCTOR\n")
+    for label, path in checks:
+        status = "PASS" if path.exists() else "WARN"
+        print(f"{status}: {label} — {path}")
+
+    if not vault_root.exists():
+        print(f"WARN: Blue Book vault does not exist — {vault_root}")
+    elif not remotes:
+        print(f"WARN: Local vault git has no remotes configured — {vault_root}")
+    else:
+        for name, url in sorted(remotes.items()):
+            print(f"PASS: Local vault Git remote {name} — {url}")
+    print("")
+
+
+def paths_write_map(_args=None):
+    vault_root = get_blue_book_vault_root()
+    archive_duplicate = LAIA_ROOT / "archive" / "duplicate-vaults"
+    remotes = get_vault_git_remotes(vault_root)
+    git_remote_text = format_vault_git_remotes(remotes)
+    state_dir = LAIA_ROOT / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path_map = state_dir / "path-map.md"
+
+    lines = [
+        "# LAIA Path Map",
+        "",
+        "This document records the canonical LAIA paths used for Phase 3 preparation.",
+        "",
+        "## Canonical Paths",
+        "",
+        f"- LAIA_ROOT: `{LAIA_ROOT}`",
+        f"- Core repo: `{REPO_ROOT}`",
+        f"- Blue Book vault: `{vault_root}`",
+        f"- Packets dir: `{LAIA_ROOT / 'packets'}`",
+        f"- State dir: `{LAIA_ROOT / 'state'}`",
+        f"- Duplicate vault archive dir: `{archive_duplicate}`",
+        f"- Local vault Git backup remote: `{git_remote_text}`",
+        "",
+        "## Path Rules",
+        "",
+        "1. `LAIA_ROOT` is the canonical root for LAIA-managed state and packets.",
+        "2. `LAIA_VAULT_PATH` may be used to override the Blue Book vault location.",
+        "3. The Blue Book vault should remain separate from `LAIA_ROOT` unless explicitly configured.",
+        "4. `state` and `packets` directories must live under `LAIA_ROOT`.",
+        "5. `archive/duplicate-vaults` is only for archive duplicates, not the authoritative vault.",
+        "6. Do not move or delete existing archive originals as part of path normalization.",
+        "7. Verify `git` remote configuration for the local Blue Book vault if using backup synchronization.",
+        "",
+        "## Notes",
+        "",
+        "- If the vault path is not present, set `LAIA_VAULT_PATH` to the desired Blue Book vault directory.",
+        "- Keep this file under `LAIA_ROOT/state` for local canonical path reference.",
+        "",
+        f"Generated: `{datetime.now().isoformat()}`",
+        "",
+    ]
+
+    path_map.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote path map: {path_map}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -6582,6 +6722,18 @@ def main():
     personal_os_validate_p = personal_os_sub.add_parser("validate-phase2")
     personal_os_validate_p.add_argument("--write", action="store_true", dest="write")
     personal_os_validate_p.set_defaults(func=personal_os_validate_phase2)
+
+    paths_p = sub.add_parser("paths")
+    paths_sub = paths_p.add_subparsers(dest="subcommand")
+
+    paths_show_p = paths_sub.add_parser("show")
+    paths_show_p.set_defaults(func=paths_show)
+
+    paths_doctor_p = paths_sub.add_parser("doctor")
+    paths_doctor_p.set_defaults(func=paths_doctor)
+
+    paths_write_map_p = paths_sub.add_parser("write-map")
+    paths_write_map_p.set_defaults(func=paths_write_map)
 
     packet_p = sub.add_parser("packet")
     packet_sub = packet_p.add_subparsers(dest="subcommand")
