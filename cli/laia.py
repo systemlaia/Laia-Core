@@ -1797,6 +1797,13 @@ def get_librarian_manifest_dir() -> Path:
     return LAIA_ROOT / "manifests" / "librarian"
 
 
+def resolve_librarian_manifest_path(path_str: str) -> Path:
+    path = Path(os.path.expanduser(path_str))
+    if not path.is_absolute():
+        path = get_librarian_manifest_dir() / path
+    return path
+
+
 def get_latest_manifest_paths() -> tuple[Path, Path]:
     manifest_dir = get_librarian_manifest_dir()
     return (
@@ -2105,7 +2112,43 @@ def librarian_report(_args=None):
     print(f"Wrote Librarian manifest report: {report_path}")
 
 
-def librarian_compare(_args=None):
+def librarian_history(_args=None):
+    import re
+
+    manifest_dir = get_librarian_manifest_dir()
+    if not manifest_dir.exists():
+        print("No Librarian manifests found. Run: laia librarian scan")
+        return
+
+    pattern = re.compile(r"^manifest-(\d{8}-\d{6})\.json$")
+    entries = []
+    for p in manifest_dir.iterdir():
+        if not p.is_file():
+            continue
+        m = pattern.match(p.name)
+        if not m:
+            continue
+        manifest = load_json_file(p) or {}
+        entries.append((m.group(1), p.name, manifest))
+
+    if not entries:
+        print("No Librarian manifests found. Run: laia librarian scan")
+        return
+
+    entries.sort(key=lambda item: item[0], reverse=True)
+    print("Librarian manifest history (latest first):")
+    print("| Filename | Generated | Root | File count | Total bytes |")
+    print("|---|---|---|---:|---:|")
+    for _, name, manifest in entries[:20]:
+        generated_at = manifest.get("generated_at", "")
+        root = manifest.get("root", "")
+        file_count = manifest.get("file_count", "")
+        total_bytes = manifest.get("total_bytes", 0)
+        total_bytes_text = format_bytes(total_bytes) if isinstance(total_bytes, int) else total_bytes
+        print(f"| {name} | {generated_at} | {root} | {file_count} | {total_bytes_text} |")
+
+
+def librarian_compare(args=None):
     """Compare two most recent timestamped librarian manifests and write a report."""
     import re
 
@@ -2114,22 +2157,38 @@ def librarian_compare(_args=None):
         print("Need at least two timestamped Librarian manifests. Run: laia librarian scan twice.")
         return
 
-    pattern = re.compile(r"^manifest-(\d{8}-\d{6})\.json$")
-    timestamped = []
-    for p in manifest_dir.iterdir():
-        if not p.is_file():
-            continue
-        m = pattern.match(p.name)
-        if m:
-            timestamped.append((m.group(1), p))
+    def resolve_path(value: str) -> Path:
+        return resolve_librarian_manifest_path(value)
 
-    if len(timestamped) < 2:
-        print("Need at least two timestamped Librarian manifests. Run: laia librarian scan twice.")
-        return
+    if getattr(args, "base", None) or getattr(args, "head", None):
+        if not getattr(args, "base", None) or not getattr(args, "head", None):
+            print("Both --base and --head must be provided together.")
+            return
+        base_path = resolve_path(args.base)
+        head_path = resolve_path(args.head)
+        if not base_path.exists():
+            print(f"Base manifest not found: {base_path}")
+            return
+        if not head_path.exists():
+            print(f"Head manifest not found: {head_path}")
+            return
+    else:
+        pattern = re.compile(r"^manifest-(\d{8}-\d{6})\.json$")
+        timestamped = []
+        for p in manifest_dir.iterdir():
+            if not p.is_file():
+                continue
+            m = pattern.match(p.name)
+            if m:
+                timestamped.append((m.group(1), p))
 
-    timestamped.sort(key=lambda t: t[0])
-    base_ts, base_path = timestamped[-2]
-    head_ts, head_path = timestamped[-1]
+        if len(timestamped) < 2:
+            print("Need at least two timestamped Librarian manifests. Run: laia librarian scan twice.")
+            return
+
+        timestamped.sort(key=lambda t: t[0])
+        base_ts, base_path = timestamped[-2]
+        head_ts, head_path = timestamped[-1]
 
     base_manifest = load_json_file(base_path)
     head_manifest = load_json_file(head_path)
@@ -2248,6 +2307,39 @@ def librarian_compare(_args=None):
     report_path.parent.mkdir(parents=True, exist_ok=True)
     write_markdown_with_frontmatter(report_path, front, body)
     print(f"Wrote manifest compare report: {report_path}")
+
+    if getattr(args, "packet", False):
+        packet_id = build_packet_id("Librarian Change Review")
+        source_paths = [
+            *[f.get("relative_path") for f in added if f.get("relative_path")],
+            *[f.get("relative_path") for f in removed if f.get("relative_path")],
+            *[a.get("relative_path") for a, _ in changed if a.get("relative_path")],
+        ]
+        source_paths = source_paths[:50]
+        packet = {
+            "packet_id": packet_id,
+            "title": "Librarian Change Review",
+            "packet_type": "librarian_change",
+            "status": "review",
+            "project": "LAIA Librarian",
+            "created": datetime.now().isoformat(),
+            "updated": datetime.now().isoformat(),
+            "summary": f"Manifest comparison from {base_path.name} to {head_path.name}.",
+            "added_count": len(added),
+            "removed_count": len(removed),
+            "changed_count": len(changed),
+            "source_paths": source_paths,
+            "next_actions": [
+                "Review added files",
+                "Review missing files before assuming deletion",
+                "Review changed files for intentional edits",
+            ],
+        }
+        index = load_packet_index()
+        index.setdefault("packets", []).append(packet)
+        save_packet_index(index)
+        write_packet_note(packet)
+        print(f"Created librarian change packet: {packet_id}")
 
 
 def personal_os_dashboard(_args=None):
@@ -7562,7 +7654,13 @@ def main():
     librarian_report_p.set_defaults(func=librarian_report)
 
     librarian_compare_p = librarian_sub.add_parser("compare")
+    librarian_compare_p.add_argument("--base", dest="base", help="Base manifest JSON filename or path")
+    librarian_compare_p.add_argument("--head", dest="head", help="Head manifest JSON filename or path")
+    librarian_compare_p.add_argument("--packet", action="store_true", dest="packet", help="Create a librarian change packet from the comparison")
     librarian_compare_p.set_defaults(func=librarian_compare)
+
+    librarian_history_p = librarian_sub.add_parser("history")
+    librarian_history_p.set_defaults(func=librarian_history)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
