@@ -2443,6 +2443,195 @@ def librarian_review(args=None):
         print(f"Wrote librarian review queue: {review_path}")
 
 
+def load_report_frontmatter(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    fm, _ = load_frontmatter(path)
+    return fm if isinstance(fm, dict) else {}
+
+
+def librarian_suggest(args=None):
+    index = load_packet_index()
+    packets = index.get("packets", []) or []
+    suggestions = []
+    blocked_packets = []
+    review_packets = []
+    matching_packets = []
+
+    for packet in packets:
+        packet_type = str(packet.get("packet_type", "")).lower()
+        project = str(packet.get("project", "")).strip()
+        status = str(packet.get("status", "")).lower()
+        source_paths = packet.get("source_paths") or []
+        type_match = packet_type in {"librarian", "librarian_change", "nas", "archive", "retrieval"}
+        project_match = project.lower() == "laia librarian"
+        status_match = status in {"review", "blocked"}
+        if type_match or project_match or status_match:
+            matching_packets.append(packet)
+            if status == "review":
+                review_packets.append(packet)
+            if status == "blocked":
+                blocked_packets.append(packet)
+
+    vault_root = get_blue_book_vault_root()
+    compare_report_path = vault_root / "05_REPORTS" / "librarian-compare-report.md"
+    manifest_report_path = vault_root / "05_REPORTS" / "librarian-manifest-report.md"
+    compare_report = load_report_frontmatter(compare_report_path)
+    manifest_report = load_report_frontmatter(manifest_report_path)
+
+    if compare_report:
+        added = compare_report.get("added_count")
+        removed = compare_report.get("removed_count")
+        changed = compare_report.get("changed_count")
+        if removed:
+            suggestions.append({
+                "priority": "High",
+                "action": "Confirm whether missing files are truly deleted before taking action.",
+                "reason": f"Latest compare report shows {removed} removed file(s).",
+                "related": "manifest compare report",
+            })
+        if added:
+            suggestions.append({
+                "priority": "High",
+                "action": "Review source paths for retrieval or newly added files.",
+                "reason": f"Latest compare report shows {added} added file(s).",
+                "related": "manifest compare report",
+            })
+        if changed:
+            suggestions.append({
+                "priority": "Medium",
+                "action": "Review changed files for intentional edits.",
+                "reason": f"Latest compare report shows {changed} changed file(s).",
+                "related": "manifest compare report",
+            })
+    elif matching_packets:
+        suggestions.append({
+            "priority": "Medium",
+            "action": "Generate a focused manifest compare report after a second scan.",
+            "reason": "No latest compare report was found.",
+            "related": "librarian packets",
+        })
+
+    if manifest_report:
+        suggestions.append({
+            "priority": "Medium",
+            "action": "Use the latest manifest report to validate high-value folders and file counts.",
+            "reason": "A librarian manifest report is available for review.",
+            "related": "librarian manifest report",
+        })
+
+    for packet in review_packets:
+        packet_id = packet.get("packet_id", "<unknown>")
+        title = packet.get("title", "")
+        suggestions.append({
+            "priority": "High",
+            "action": "Review source paths and metadata for this review packet.",
+            "reason": f"Packet status is review: {title}",
+            "related": packet_id,
+        })
+
+    for packet in blocked_packets:
+        packet_id = packet.get("packet_id", "<unknown>")
+        title = packet.get("title", "")
+        suggestions.append({
+            "priority": "High",
+            "action": "Investigate and resolve the blocked packet before proceeding.",
+            "reason": f"Packet status is blocked: {title}",
+            "related": packet_id,
+        })
+
+    for packet in matching_packets:
+        packet_id = packet.get("packet_id", "<unknown>")
+        packet_type = str(packet.get("packet_type", "")).lower()
+        if packet_type == "retrieval":
+            suggestions.append({
+                "priority": "Medium",
+                "action": "Review retrieval packet source paths for completeness.",
+                "reason": "Retrieval packets may require source path validation.",
+                "related": packet_id,
+            })
+        if packet_type == "librarian_change":
+            suggestions.append({
+                "priority": "Medium",
+                "action": "Confirm whether a project packet should be created for this change.",
+                "reason": "Librarian change packets may indicate a large archive category or meaningful update.",
+                "related": packet_id,
+            })
+
+    if not suggestions:
+        print("No Librarian suggestions could be derived.")
+        return
+
+    # Deduplicate suggestions on action + related
+    seen = set()
+    unique_suggestions = []
+    for suggestion in suggestions:
+        key = (suggestion["priority"], suggestion["action"], suggestion["related"])
+        if key not in seen:
+            seen.add(key)
+            unique_suggestions.append(suggestion)
+
+    unique_suggestions.sort(key=lambda item: (item["priority"], item["related"], item["action"]))
+
+    print("Librarian suggestions:")
+    print(f"Total matching packets: {len(matching_packets)}")
+    print(f"Review packets: {len(review_packets)}")
+    print(f"Blocked packets: {len(blocked_packets)}")
+    print("")
+    print("| Priority | Action | Reason | Related Packet |")
+    print("|---|---|---|---|")
+    for suggestion in unique_suggestions:
+        print(f"| {suggestion['priority']} | {suggestion['action']} | {suggestion['reason']} | {suggestion['related']} |")
+
+    if getattr(args, "write", False):
+        system_dir = vault_root / "07_SYSTEM"
+        system_dir.mkdir(parents=True, exist_ok=True)
+        suggestions_path = system_dir / "librarian-suggestions.md"
+
+        front = {
+            "type": "librarian_suggestions",
+            "status": "active",
+            "updated": datetime.now().isoformat(),
+            "suggestion_count": len(unique_suggestions),
+        }
+
+        body = []
+        body.append("# Librarian Suggestions")
+        body.append("")
+        body.append("## Summary")
+        body.append(f"- Generated: `{datetime.now().isoformat()}`")
+        body.append(f"- Suggestion count: `{len(unique_suggestions)}`")
+        body.append("- Safety mode: propose-only")
+        body.append("")
+        body.append("## Suggested Actions")
+        body.append("")
+        body.append("| Priority | Action | Reason | Related Packet |")
+        body.append("|---|---|---|---|")
+        for suggestion in unique_suggestions:
+            body.append(
+                f"| {suggestion['priority']} | {suggestion['action']} | {suggestion['reason']} | {suggestion['related']} |"
+            )
+        body.append("")
+        body.append("## Blocked / Needs Human Decision")
+        body.append("")
+        if blocked_packets:
+            for packet in blocked_packets:
+                body.append(f"- `{packet.get('packet_id', '<unknown>')}` — {packet.get('title', '')} ({packet.get('packet_type', '')})")
+        else:
+            body.append("- None")
+        body.append("")
+        body.append("## Safety Rules")
+        body.append("")
+        body.append("- This command is propose-only.")
+        body.append("- It does not move, rename, delete, copy, or modify archive originals.")
+        body.append("- Removed in a compare report means missing from latest manifest, not confirmed deleted.")
+        body.append("- Any future archive-changing action must require an explicit packet and human approval.")
+        body.append("")
+
+        write_markdown_with_frontmatter(suggestions_path, front, body)
+        print(f"Wrote librarian suggestions: {suggestions_path}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -7766,6 +7955,10 @@ def main():
     librarian_review_p = librarian_sub.add_parser("review")
     librarian_review_p.add_argument("--write", action="store_true", dest="write")
     librarian_review_p.set_defaults(func=librarian_review)
+
+    librarian_suggest_p = librarian_sub.add_parser("suggest")
+    librarian_suggest_p.add_argument("--write", action="store_true", dest="write")
+    librarian_suggest_p.set_defaults(func=librarian_suggest)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
