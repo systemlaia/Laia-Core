@@ -172,6 +172,12 @@ def write_packet_note(packet: dict, vault_root: Path | None = None):
         frontmatter["proposed_action_note"] = packet["proposed_action_note"]
     if packet.get("proposed_action_at"):
         frontmatter["proposed_action_at"] = packet["proposed_action_at"]
+    if packet.get("retrieval_review_outcome"):
+        frontmatter["retrieval_review_outcome"] = packet["retrieval_review_outcome"]
+    if packet.get("retrieval_review_note"):
+        frontmatter["retrieval_review_note"] = packet["retrieval_review_note"]
+    if packet.get("retrieval_reviewed_at"):
+        frontmatter["retrieval_reviewed_at"] = packet["retrieval_reviewed_at"]
     if packet.get("history") and isinstance(packet.get("history"), list):
         frontmatter["history"] = packet["history"]
 
@@ -204,6 +210,12 @@ def write_packet_note(packet: dict, vault_root: Path | None = None):
         body_lines.append(f"**Proposed Action Note:** `{packet.get('proposed_action_note', '')}`")
     if packet.get("proposed_action_at"):
         body_lines.append(f"**Proposed Action At:** `{packet.get('proposed_action_at', '')}`")
+    if packet.get("retrieval_review_outcome"):
+        body_lines.append(f"**Retrieval Review Outcome:** `{packet.get('retrieval_review_outcome', '')}`")
+    if packet.get("retrieval_review_note"):
+        body_lines.append(f"**Retrieval Review Note:** `{packet.get('retrieval_review_note', '')}`")
+    if packet.get("retrieval_reviewed_at"):
+        body_lines.append(f"**Retrieval Reviewed At:** `{packet.get('retrieval_reviewed_at', '')}`")
     body_lines.extend([
         "",
         "## Summary",
@@ -3034,6 +3046,13 @@ def get_retrieval_package_report_path() -> Path:
     return report_dir / "librarian-retrieval-package-report.md"
 
 
+def get_retrieval_review_report_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    report_dir = vault_root / "07_SYSTEM"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "librarian-retrieval-review.md"
+
+
 def get_retrieval_index_path(packet_id: str) -> Path:
     return get_retrieval_destination(packet_id) / "RETRIEVAL_INDEX.md"
 
@@ -3832,6 +3851,107 @@ def librarian_package_retrieval(args):
 
     write_markdown_with_frontmatter(package_report_path, report_frontmatter, report_body)
     print(f"Wrote retrieval package report: {package_report_path}")
+
+
+def librarian_review_retrieval(args):
+    packet_id = args.packet_id
+    outcome = args.outcome
+    note = args.note or ""
+
+    allowed_outcomes = {
+        "useful",
+        "not-useful",
+        "needs-more-work",
+        "create-report",
+        "create-project",
+        "archive-reference",
+        "ignore-for-now",
+    }
+    if outcome not in allowed_outcomes:
+        print(f"Invalid outcome: {outcome}")
+        print("Allowed outcomes: " + ", ".join(sorted(allowed_outcomes)))
+        return
+
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    retrieval_dir = LAIA_ROOT / "retrievals" / packet_id
+    if not retrieval_dir.exists() or not retrieval_dir.is_dir():
+        print(f"Retrieval folder not found: {retrieval_dir}")
+        print(f"Run: laia librarian retrieve {packet_id} --execute")
+        return
+
+    local_index_path = get_retrieval_index_path(packet_id)
+    if not local_index_path.exists():
+        print(f"Warning: RETRIEVAL_INDEX.md not found: {local_index_path}")
+
+    reviewed_at = datetime.now().isoformat()
+    packet["retrieval_review_outcome"] = outcome
+    packet["retrieval_review_note"] = note
+    packet["retrieval_reviewed_at"] = reviewed_at
+    packet["updated"] = reviewed_at
+
+    history = packet.get("history")
+    if not isinstance(history, list):
+        history = []
+    history.append({
+        "event": "retrieval_reviewed",
+        "outcome": outcome,
+        "note": note,
+        "created_at": reviewed_at,
+    })
+    packet["history"] = history
+
+    save_packet_index(index)
+    write_packet_note(packet, vault_root=get_blue_book_vault_root())
+
+    recommended_steps = {
+        "useful": "Keep retrieval package for reference.",
+        "not-useful": "Mark packet as reviewed, no further action.",
+        "needs-more-work": "Create a narrower packet or refine query.",
+        "create-report": "Use report workflow.",
+        "create-project": "Create project from retrieval set.",
+        "archive-reference": "Link retrieval to archive/reference note.",
+        "ignore-for-now": "Leave packet but deprioritize.",
+    }
+    review_path = get_retrieval_review_report_path()
+    review_frontmatter = {
+        "type": "librarian_retrieval_review",
+        "status": "active",
+        "packet_id": packet_id,
+        "outcome": outcome,
+        "updated": reviewed_at,
+    }
+    review_body = [
+        "# Librarian Retrieval Review",
+        "",
+        "## Summary",
+        "",
+        f"- Packet: `{packet_id}`",
+        f"- Outcome: `{outcome}`",
+        f"- Note: `{note}`",
+        f"- Reviewed: `{reviewed_at}`",
+        f"- Retrieval folder: `{retrieval_dir}`",
+        f"- Retrieval index: `{local_index_path if local_index_path.exists() else 'missing'}`",
+        "",
+        "## Outcome Meaning",
+        "",
+        f"{recommended_steps[outcome]}",
+        "",
+        "## Recommended Next Step",
+        "",
+        f"- {recommended_steps[outcome]}",
+        "",
+        "## Safety Notes",
+        "",
+        "- This command records review outcome only.",
+        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not write inside the archive root.",
+    ]
+    write_markdown_with_frontmatter(review_path, review_frontmatter, review_body)
+    print(f"Recorded retrieval review: {review_path}")
 
 
 def librarian_open_retrieval(args):
@@ -9575,6 +9695,20 @@ def main():
     librarian_verify_retrieval_p.add_argument("packet_id")
     librarian_verify_retrieval_p.add_argument("--write", action="store_true", dest="write")
     librarian_verify_retrieval_p.set_defaults(func=librarian_verify_retrieval)
+
+    librarian_review_retrieval_p = librarian_sub.add_parser("review-retrieval")
+    librarian_review_retrieval_p.add_argument("packet_id")
+    librarian_review_retrieval_p.add_argument("--outcome", required=True, choices=[
+        "useful",
+        "not-useful",
+        "needs-more-work",
+        "create-report",
+        "create-project",
+        "archive-reference",
+        "ignore-for-now",
+    ])
+    librarian_review_retrieval_p.add_argument("--note", required=True)
+    librarian_review_retrieval_p.set_defaults(func=librarian_review_retrieval)
 
     librarian_open_retrieval_p = librarian_sub.add_parser("open-retrieval")
     librarian_open_retrieval_p.add_argument("packet_id")
