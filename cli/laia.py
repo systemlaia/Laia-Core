@@ -2155,8 +2155,17 @@ def librarian_compare(_args=None):
     removed = [base_map[k] for k in removed_keys]
     changed = [(base_map[k], head_map[k]) for k in changed_keys]
 
+    print("\nLIBRARIAN MANIFEST COMPARE")
+    print(f"Base manifest: {base_path.name}")
+    print(f"Head manifest: {head_path.name}")
+    print(f"Added: {len(added)}")
+    print(f"Removed: {len(removed)}")
+    print(f"Changed: {len(changed)}")
+    print("")
+
     report_id = "librarian-compare-report"
-    report_path = get_report_vault_dir() / f"{report_id}.md"
+    vault_root = get_blue_book_vault_root()
+    report_path = vault_root / "05_REPORTS" / f"{report_id}.md"
 
     front = {
         "type": "report",
