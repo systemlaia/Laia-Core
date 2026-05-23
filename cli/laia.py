@@ -2965,6 +2965,20 @@ def get_retrieval_report_path() -> Path:
     return report_dir / "librarian-retrieval-plan-report.md"
 
 
+def get_execution_request_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-execution-request.md"
+
+
+def get_retrieval_plan_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-retrieval-plan.md"
+
+
 def librarian_retrieve_plan(args):
     packet_id = args.packet_id
     packet, _index = find_packet_record(packet_id)
@@ -3132,6 +3146,86 @@ def librarian_retrieve_plan(args):
 
     write_markdown_with_frontmatter(report_path, report_frontmatter, report_body)
     print(f"Wrote librarian retrieval plan report: {report_path}")
+
+
+def librarian_request_execution(args):
+    packet_id = args.packet_id
+    reason = args.reason or ""
+    packet, _index = find_packet_record(packet_id)
+    ready, checks, blocking = evaluate_librarian_packet_readiness(packet)
+    plan_path = get_retrieval_plan_path()
+    plan_exists = plan_path.exists()
+
+    if packet:
+        source_paths = packet.get("source_paths") or []
+        if not isinstance(source_paths, list):
+            source_paths = [source_paths]
+        proposed_action = packet.get("proposed_action", "")
+    else:
+        source_paths = []
+        proposed_action = ""
+
+    source_count = len(source_paths)
+    suggested_destination = LAIA_ROOT / "retrievals" / packet_id
+    status = "pending-human-approval" if ready and plan_exists else "blocked"
+
+    if not plan_exists:
+        blocking.append("Retrieval plan does not exist")
+
+    request_path = get_execution_request_path()
+    frontmatter = {
+        "type": "librarian_execution_request",
+        "status": status,
+        "packet_id": packet_id,
+        "ready": ready,
+        "updated": datetime.now().isoformat(),
+        "source_count": source_count,
+        "requires_human_approval": True,
+    }
+
+    body_lines = [
+        "# Librarian Execution Request",
+        "",
+        "## Summary",
+        f"- Packet: `{packet_id}`",
+        f"- Status: `{status}`",
+        f"- Ready: `{ready}`",
+        f"- Reason: `{reason}`",
+        f"- Source count: `{source_count}`",
+        f"- Requires human approval: `true`",
+        "",
+        "## Preconditions",
+        "",
+        "| Check | Status | Detail |",
+        "|---|---|---|",
+    ]
+    for check, check_status, detail in checks:
+        body_lines.append(f"| {check} | {check_status} | {detail} |")
+
+    body_lines.extend([
+        "",
+        "## Requested Action",
+        "",
+        f"- Proposed action: `{proposed_action}`",
+        f"- Suggested destination: `{suggested_destination}`",
+        f"- Retrieval plan: `{plan_path}` ({'exists' if plan_exists else 'missing'})",
+        "",
+        "## Human Approval Required",
+        "",
+        "This request does not authorize execution by itself.",
+        "A future explicit command must be run by the human operator.",
+        "",
+        "## Safety Rules",
+        "",
+        "- This command is read-only.",
+        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not create destination folders.",
+        "- It did not write inside the archive root.",
+        "- Future execution must require a separate explicit command.",
+    ])
+
+    write_markdown_with_frontmatter(request_path, frontmatter, body_lines)
+    print(f"Wrote librarian execution request: {request_path}")
 
 
 def librarian_propose_action(args):
@@ -8720,6 +8814,11 @@ def main():
     librarian_retrieve_plan_p = librarian_sub.add_parser("retrieve-plan")
     librarian_retrieve_plan_p.add_argument("packet_id")
     librarian_retrieve_plan_p.set_defaults(func=librarian_retrieve_plan)
+
+    librarian_request_execution_p = librarian_sub.add_parser("request-execution")
+    librarian_request_execution_p.add_argument("packet_id")
+    librarian_request_execution_p.add_argument("--reason", required=True)
+    librarian_request_execution_p.set_defaults(func=librarian_request_execution)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
