@@ -2951,6 +2951,189 @@ def librarian_ready(args):
         print(f"Wrote librarian readiness file: {readiness_path}")
 
 
+def get_retrieval_plan_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-retrieval-plan.md"
+
+
+def get_retrieval_report_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    report_dir = vault_root / "05_REPORTS"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "librarian-retrieval-plan-report.md"
+
+
+def librarian_retrieve_plan(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    ready, checks, blocking = evaluate_librarian_packet_readiness(packet)
+
+    suggested_destination = LAIA_ROOT / "retrievals" / packet_id
+    destination_exists = suggested_destination.exists()
+    if packet:
+        source_paths = packet.get("source_paths") or []
+        if not isinstance(source_paths, list):
+            source_paths = [source_paths]
+    else:
+        source_paths = []
+    source_count = len(source_paths)
+
+    print("Librarian Retrieval Plan")
+    print(f"Packet: {packet_id}")
+    print(f"Ready: {ready}")
+    print(f"Source file count: {source_count}")
+    print(f"Suggested destination: {suggested_destination}")
+    print("")
+    if not ready:
+        print("NOT READY")
+        print("Packet is not ready for retrieval planning. See the written plan/report for details.")
+        print("")
+
+    plan_path = get_retrieval_plan_path()
+    report_path = get_retrieval_report_path()
+
+    plan_frontmatter = {
+        "type": "librarian_retrieval_plan",
+        "status": "draft",
+        "packet_id": packet_id,
+        "ready": ready,
+        "updated": datetime.now().isoformat(),
+        "source_count": source_count,
+        "suggested_destination": str(suggested_destination),
+    }
+
+    plan_body = [
+        "# Librarian Retrieval Plan",
+        "",
+        "## Summary",
+        f"- Packet: `{packet_id}`",
+        f"- Ready: `{ready}`",
+        f"- Source file count: `{source_count}`",
+        f"- Suggested destination: `{suggested_destination}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Source Paths",
+        "",
+        "| Source Path | Exists? | Size |",
+        "|---|---|---|",
+    ]
+
+    for path_text in source_paths:
+        source_path = Path(path_text).expanduser()
+        exists = "yes" if source_path.exists() else "no"
+        if source_path.exists():
+            if source_path.is_file():
+                size = str(source_path.stat().st_size)
+            else:
+                size = "directory"
+        else:
+            size = "missing"
+        plan_body.append(f"| {path_text} | {exists} | {size} |")
+
+    plan_body.extend([
+        "",
+        "## Proposed Destination",
+        "",
+        f"- Suggested destination: `{suggested_destination}`",
+        f"- Destination exists: `{destination_exists}`",
+        "- Destination creation required: `yes` if this path does not already exist and you want to use it, otherwise `no`",
+        "",
+        "## Manual Retrieval Commands",
+        "",
+    ])
+
+    if ready:
+        plan_body.append("These commands are examples only and must be run manually.")
+        plan_body.append("")
+        plan_body.append(f"mkdir -p \"{suggested_destination}\"")
+        plan_body.append("")
+        for path_text in source_paths:
+            plan_body.append(f"cp -n \"{path_text}\" \"{suggested_destination}/\"")
+    else:
+        plan_body.append("This packet is not ready for retrieval planning.")
+        plan_body.append("Do not perform retrieval until readiness checks pass.")
+
+    plan_body.extend([
+        "",
+        "## Safety Checks",
+        "",
+        "| Check | Status | Detail |",
+        "|---|---|---|",
+    ])
+    for check, status, detail in checks:
+        plan_body.append(f"| {check} | {status} | {detail} |")
+
+    plan_body.extend([
+        "",
+        "## Notes",
+        "",
+        "- This plan is read-only.",
+        "- This command did not move, rename, delete, copy, or modify archive originals.",
+        "- Future execution must require a separate explicit command and human approval.",
+    ])
+
+    write_markdown_with_frontmatter(plan_path, plan_frontmatter, plan_body)
+    print(f"Wrote librarian retrieval plan: {plan_path}")
+
+    report_frontmatter = {
+        "type": "report",
+        "report_id": "librarian-retrieval-plan-report",
+        "project": "LAIA Librarian",
+        "report_type": "retrieval_plan",
+        "status": "draft",
+        "packet_id": packet_id,
+        "ready": ready,
+        "updated": datetime.now().isoformat(),
+        "source_count": source_count,
+    }
+
+    report_body = [
+        "# Librarian Retrieval Plan Report",
+        "",
+        "## Summary",
+        f"- Packet: `{packet_id}`",
+        f"- Ready: `{ready}`",
+        f"- Source file count: `{source_count}`",
+        f"- Suggested destination: `{suggested_destination}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Readiness Notes",
+        "",
+    ]
+    if ready:
+        report_body.append("Packet is ready for retrieval planning.")
+    else:
+        report_body.append("Packet is not ready for retrieval planning.")
+        report_body.append("")
+        report_body.append("Blocking issues:")
+        for issue in blocking:
+            report_body.append(f"- {issue}")
+
+    report_body.extend([
+        "",
+        "## Safety Checks",
+        "",
+        "| Check | Status | Detail |",
+        "|---|---|---|",
+    ])
+    for check, status, detail in checks:
+        report_body.append(f"| {check} | {status} | {detail} |")
+
+    report_body.extend([
+        "",
+        "## Notes",
+        "",
+        "- This report is read-only.",
+        "- This command did not move, rename, delete, copy, or modify archive originals.",
+        "- Future execution must require a separate explicit command and human approval.",
+    ])
+
+    write_markdown_with_frontmatter(report_path, report_frontmatter, report_body)
+    print(f"Wrote librarian retrieval plan report: {report_path}")
+
+
 def librarian_propose_action(args):
     allowed_actions = {
         "retrieve",
@@ -8533,6 +8716,10 @@ def main():
     librarian_ready_p.add_argument("packet_id")
     librarian_ready_p.add_argument("--write", action="store_true", dest="write")
     librarian_ready_p.set_defaults(func=librarian_ready)
+
+    librarian_retrieve_plan_p = librarian_sub.add_parser("retrieve-plan")
+    librarian_retrieve_plan_p.add_argument("packet_id")
+    librarian_retrieve_plan_p.set_defaults(func=librarian_retrieve_plan)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
