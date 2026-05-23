@@ -2972,6 +2972,13 @@ def get_execution_request_path() -> Path:
     return system_dir / "librarian-execution-request.md"
 
 
+def get_execution_approval_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-execution-approval.md"
+
+
 def get_retrieval_plan_path() -> Path:
     vault_root = get_blue_book_vault_root()
     system_dir = vault_root / "07_SYSTEM"
@@ -3226,6 +3233,96 @@ def librarian_request_execution(args):
 
     write_markdown_with_frontmatter(request_path, frontmatter, body_lines)
     print(f"Wrote librarian execution request: {request_path}")
+
+
+def librarian_approve_execution(args):
+    packet_id = args.packet_id
+    approval_text = args.approval or ""
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    ready, checks, blocking = evaluate_librarian_packet_readiness(packet)
+    plan_path = get_retrieval_plan_path()
+    request_path = get_execution_request_path()
+    plan_exists = plan_path.exists()
+    request_exists = request_path.exists()
+
+    if not plan_exists:
+        blocking.append("Retrieval plan does not exist")
+    if not request_exists:
+        blocking.append("Execution request does not exist")
+
+    approved_at = datetime.now().isoformat()
+    packet["execution_approval"] = "approved"
+    packet["execution_approval_at"] = approved_at
+    packet["execution_approval_text"] = approval_text
+    packet["updated"] = approved_at
+
+    history = packet.get("history")
+    if not isinstance(history, list):
+        history = []
+    history.append({
+        "event": "execution_approved",
+        "note": approval_text,
+        "created_at": approved_at,
+    })
+    packet["history"] = history
+
+    save_packet_index(index)
+    write_packet_note(packet, vault_root=get_blue_book_vault_root())
+
+    approval_path = get_execution_approval_path()
+    frontmatter = {
+        "type": "librarian_execution_approval",
+        "status": "approved",
+        "packet_id": packet_id,
+        "ready": ready,
+        "updated": approved_at,
+        "requires_separate_execution": True,
+    }
+
+    body_lines = [
+        "# Librarian Execution Approval",
+        "",
+        "## Summary",
+        f"- Packet: `{packet_id}`",
+        f"- Ready: `{ready}`",
+        f"- Approval: `{approval_text}`",
+        f"- Approved at: `{approved_at}`",
+        "- Requires separate execution: `true`",
+        "",
+        "## Preconditions",
+        "",
+        "| Check | Status | Detail |",
+        "|---|---|---|",
+    ]
+    for check, check_status, detail in checks:
+        body_lines.append(f"| {check} | {check_status} | {detail} |")
+
+    body_lines.extend([
+        "",
+        "## Approval Text",
+        "",
+        "> " + approval_text.replace("\n", "\n> "),
+        "",
+        "## Execution Boundary",
+        "",
+        "This approval record does not execute the retrieval.",
+        "A future command must still be run explicitly by the human operator.",
+        "",
+        "## Safety Rules",
+        "",
+        "- This command is read-only with respect to archive originals.",
+        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not create destination folders.",
+        "- It did not write inside the archive root.",
+        "- Future execution must require a separate explicit command.",
+    ])
+
+    write_markdown_with_frontmatter(approval_path, frontmatter, body_lines)
+    print(f"Wrote librarian execution approval: {approval_path}")
 
 
 def librarian_propose_action(args):
@@ -8819,6 +8916,11 @@ def main():
     librarian_request_execution_p.add_argument("packet_id")
     librarian_request_execution_p.add_argument("--reason", required=True)
     librarian_request_execution_p.set_defaults(func=librarian_request_execution)
+
+    librarian_approve_execution_p = librarian_sub.add_parser("approve-execution")
+    librarian_approve_execution_p.add_argument("packet_id")
+    librarian_approve_execution_p.add_argument("--approval", required=True)
+    librarian_approve_execution_p.set_defaults(func=librarian_approve_execution)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
