@@ -3027,6 +3027,17 @@ def get_retrieval_verification_report_path() -> Path:
     return report_dir / "librarian-retrieval-verification-report.md"
 
 
+def get_retrieval_package_report_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    report_dir = vault_root / "05_REPORTS"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "librarian-retrieval-package-report.md"
+
+
+def get_retrieval_index_path(packet_id: str) -> Path:
+    return get_retrieval_destination(packet_id) / "RETRIEVAL_INDEX.md"
+
+
 def get_retrieval_packet_note_path(packet_id: str) -> Path:
     vault_root = get_blue_book_vault_root()
     return vault_root / "04_PACKETS" / f"{packet_id}.md"
@@ -3688,6 +3699,139 @@ def librarian_verify_retrieval(args):
 
         write_markdown_with_frontmatter(report_path, report_frontmatter, report_body)
         print(f"Wrote verification report: {report_path}")
+
+
+def librarian_package_retrieval(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    retrieval_dir = LAIA_ROOT / "retrievals" / packet_id
+    if not retrieval_dir.exists() or not retrieval_dir.is_dir():
+        print(f"Retrieval folder not found. Run: laia librarian retrieve {packet_id} --execute")
+        return
+
+    files = []
+    for child in sorted(retrieval_dir.iterdir()):
+        if not child.is_file():
+            continue
+        if child.name in {"RETRIEVAL_INDEX.md", "retrieval-receipt.md", ".DS_Store"}:
+            continue
+        stat = child.stat()
+        files.append((child.name, stat.st_size, datetime.fromtimestamp(stat.st_mtime).isoformat()))
+
+    file_count = len(files)
+    total_bytes = sum(size for _, size, _ in files)
+    local_index_path = get_retrieval_index_path(packet_id)
+    package_report_path = get_retrieval_package_report_path()
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    verification_report_path = get_retrieval_verification_report_path()
+    packet_note_path = get_retrieval_packet_note_path(packet_id)
+
+    local_frontmatter = {
+        "type": "retrieval_index",
+        "packet_id": packet_id,
+        "status": "active",
+        "updated": datetime.now().isoformat(),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
+
+    local_body = [
+        "# Retrieval Index",
+        "",
+        "## Summary",
+        "",
+        f"- Packet: `{packet_id}`",
+        f"- File count: `{file_count}`",
+        f"- Total size: `{total_bytes}`",
+        f"- Retrieval folder: `{retrieval_dir}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Files",
+        "",
+        "| File | Size | Modified |",
+        "|---|---|---|",
+    ]
+    for name, size, modified in files:
+        local_body.append(f"| {name} | {size} | {modified} |")
+
+    local_body.extend([
+        "",
+        "## Review Checklist",
+        "",
+        "- [ ] Open each copied file.",
+        "- [ ] Confirm the retrieved set matches the packet intent.",
+        "- [ ] Confirm no archive originals were modified.",
+        "- [ ] Decide whether to create a project, report, or archive note from this set.",
+        "",
+        "## Related Files",
+        "",
+        f"- Retrieval receipt: `{local_receipt_path}`",
+        f"- Verification report: `{verification_report_path}`",
+        f"- Packet note: `{packet_note_path}`",
+        "",
+        "## Safety Notes",
+        "",
+        "- This index describes copied retrieval files only.",
+        "- This command did not move, rename, delete, copy, or modify archive originals.",
+        "- This command did not write inside the archive root.",
+    ])
+
+    write_markdown_with_frontmatter(local_index_path, local_frontmatter, local_body)
+    print(f"Wrote retrieval index: {local_index_path}")
+
+    report_frontmatter = {
+        "type": "report",
+        "report_id": "librarian-retrieval-package-report",
+        "project": "LAIA Librarian",
+        "report_type": "retrieval_package",
+        "status": "active",
+        "packet_id": packet_id,
+        "updated": datetime.now().isoformat(),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
+
+    report_body = [
+        "# Librarian Retrieval Package Report",
+        "",
+        "## Summary",
+        "",
+        f"- Packet: `{packet_id}`",
+        f"- File count: `{file_count}`",
+        f"- Total size: `{total_bytes}`",
+        f"- Retrieval folder: `{retrieval_dir}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Package Contents",
+        "",
+        "| File | Size | Modified |",
+        "|---|---|---|",
+    ]
+    for name, size, modified in files:
+        report_body.append(f"| {name} | {size} | {modified} |")
+
+    report_body.extend([
+        "",
+        "## Review Checklist",
+        "",
+        "- [ ] Open each copied file.",
+        "- [ ] Confirm the retrieved set matches the packet intent.",
+        "- [ ] Confirm no archive originals were modified.",
+        "- [ ] Decide whether to create a project, report, or archive note from this set.",
+        "",
+        "## Safety Notes",
+        "",
+        "- This package report describes copied retrieval files only.",
+        "- This command did not move, rename, delete, copy, or modify archive originals.",
+        "- This command did not write inside the archive root.",
+    ])
+
+    write_markdown_with_frontmatter(package_report_path, report_frontmatter, report_body)
+    print(f"Wrote retrieval package report: {package_report_path}")
 
 
 def librarian_open_retrieval(args):
@@ -9438,6 +9582,10 @@ def main():
     open_mode_group.add_argument("--receipt", action="store_true", dest="receipt")
     open_mode_group.add_argument("--vault", action="store_true", dest="vault")
     librarian_open_retrieval_p.set_defaults(func=librarian_open_retrieval)
+
+    librarian_package_retrieval_p = librarian_sub.add_parser("package-retrieval")
+    librarian_package_retrieval_p.add_argument("packet_id")
+    librarian_package_retrieval_p.set_defaults(func=librarian_package_retrieval)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
