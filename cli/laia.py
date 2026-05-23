@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import subprocess
+import shutil
 from pathlib import Path
 from datetime import date, datetime
 import yaml
@@ -1933,7 +1934,26 @@ def get_archive_root(args=None) -> Path:
     archive_root = os.environ.get("LAIA_ARCHIVE_ROOT")
     if archive_root:
         return Path(archive_root).expanduser()
+
+    manifest_root = get_archive_root_from_librarian_manifest()
+    if manifest_root:
+        return manifest_root
+
     return Path(os.path.expanduser("~/LAIA_ARCHIVE"))
+
+
+def get_archive_root_from_librarian_manifest() -> Path | None:
+    manifest_path, _ = get_latest_manifest_paths()
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest_json = json.loads(manifest_path.read_text(encoding="utf-8"))
+        root_value = manifest_json.get("root")
+        if root_value:
+            return Path(os.path.expanduser(root_value))
+    except Exception:
+        pass
+    return None
 
 
 def get_librarian_manifest_dir() -> Path:
@@ -2979,6 +2999,41 @@ def get_execution_approval_path() -> Path:
     return system_dir / "librarian-execution-approval.md"
 
 
+def get_retrieval_destination(packet_id: str) -> Path:
+    return LAIA_ROOT / "retrievals" / packet_id
+
+
+def resolve_packet_source_path(path_text: str, archive_root: Path) -> Path:
+    path = Path(os.path.expanduser(path_text))
+    return path if path.is_absolute() else archive_root / path
+
+
+def get_retrieval_receipt_path(packet_id: str) -> Path:
+    return get_retrieval_destination(packet_id) / "retrieval-receipt.md"
+
+
+def get_blue_book_retrieval_receipt_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-retrieval-receipt.md"
+
+
+def make_unique_destination_path(destination_dir: Path, source_path: Path) -> Path:
+    destination_name = source_path.name
+    candidate = destination_dir / destination_name
+    if not candidate.exists():
+        return candidate
+
+    base, ext = os.path.splitext(destination_name)
+    index = 2
+    while True:
+        candidate = destination_dir / f"{base}-copy-{index}{ext}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
 def get_retrieval_plan_path() -> Path:
     vault_root = get_blue_book_vault_root()
     system_dir = vault_root / "07_SYSTEM"
@@ -3233,6 +3288,187 @@ def librarian_request_execution(args):
 
     write_markdown_with_frontmatter(request_path, frontmatter, body_lines)
     print(f"Wrote librarian execution request: {request_path}")
+
+
+def librarian_retrieve(args):
+    packet_id = args.packet_id
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    ready, checks, blocking = evaluate_librarian_packet_readiness(packet)
+    plan_path = get_retrieval_plan_path()
+    request_path = get_execution_request_path()
+    approval_path = get_execution_approval_path()
+    packet_note_path = get_packet_note_path(packet_id)
+
+    plan_exists = plan_path.exists()
+    request_exists = request_path.exists()
+    approval_exists = approval_path.exists()
+    packet_note_exists = packet_note_path.exists()
+
+    if not plan_exists:
+        blocking.append("Retrieval plan does not exist")
+    if not request_exists:
+        blocking.append("Execution request does not exist")
+    if not approval_exists:
+        blocking.append("Execution approval does not exist")
+    if not packet_note_exists:
+        blocking.append("Packet note does not exist")
+
+    if not ready or blocking:
+        print("NOT READY")
+        print("Packet is not eligible for retrieval.")
+        if blocking:
+            print("Blocking issues:")
+            for issue in blocking:
+                print(f"- {issue}")
+        return
+
+    source_paths = packet.get("source_paths") or []
+    if not isinstance(source_paths, list):
+        source_paths = [source_paths]
+
+    archive_root = get_archive_root()
+    destination_dir = get_retrieval_destination(packet_id)
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    blue_book_receipt_path = get_blue_book_retrieval_receipt_path()
+
+    source_count = len(source_paths)
+    copied_files: list[tuple[str, str, str, int]] = []
+    skipped_files: list[tuple[str, str, str, str]] = []
+
+    if args.execute:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+
+    for path_text in source_paths:
+        resolved_path = resolve_packet_source_path(path_text, archive_root)
+        target_path = make_unique_destination_path(destination_dir, resolved_path)
+        if not resolved_path.exists():
+            skipped_files.append((path_text, str(resolved_path), "missing", str(target_path)))
+            continue
+        if not resolved_path.is_file():
+            skipped_files.append((path_text, str(resolved_path), "not a file", str(target_path)))
+            continue
+
+        if args.execute:
+            try:
+                shutil.copy2(resolved_path, target_path)
+                copied_files.append((path_text, str(resolved_path), str(target_path), resolved_path.stat().st_size))
+            except Exception as exc:
+                skipped_files.append((path_text, str(resolved_path), "copy failed", f"{exc}"))
+        else:
+            copied_files.append((path_text, str(resolved_path), str(target_path), resolved_path.stat().st_size))
+
+    copied_count = len(copied_files)
+    skipped_count = len(skipped_files)
+    executed = bool(args.execute)
+    receipt_status = "executed" if executed else "dry-run"
+
+    if not args.execute:
+        print("Dry run copy plan:")
+        if copied_files or skipped_files:
+            for source, resolved, dest, _size in copied_files:
+                print(f"- Source: {source}")
+                print(f"  Resolved: {resolved}")
+                print(f"  Exists: yes")
+                print(f"  Destination: {dest}")
+            for source, resolved, reason, dest in skipped_files:
+                print(f"- Source: {source}")
+                print(f"  Resolved: {resolved}")
+                print(f"  Exists: no")
+                print(f"  Destination: {dest}")
+                print(f"  Reason: {reason}")
+        else:
+            print("No files would be copied.")
+
+        if copied_count == 0:
+            print("No resolvable source files found. Check LAIA_ARCHIVE_ROOT or manifest root.")
+        print("")
+
+    if executed:
+        packet["retrieval_executed"] = True
+        packet["retrieval_executed_at"] = datetime.now().isoformat()
+        packet["retrieval_destination"] = str(destination_dir)
+        packet["retrieval_copied_count"] = copied_count
+        packet["retrieval_skipped_count"] = skipped_count
+        packet["updated"] = datetime.now().isoformat()
+
+        history = packet.get("history")
+        if not isinstance(history, list):
+            history = []
+        history.append({
+            "event": "retrieval_executed",
+            "destination": str(destination_dir),
+            "copied_count": copied_count,
+            "skipped_count": skipped_count,
+            "created_at": datetime.now().isoformat(),
+        })
+        packet["history"] = history
+        save_packet_index(index)
+        write_packet_note(packet, vault_root=get_blue_book_vault_root())
+
+    receipt_frontmatter = {
+        "type": "librarian_retrieval_receipt",
+        "status": receipt_status,
+        "packet_id": packet_id,
+        "executed": executed,
+        "updated": datetime.now().isoformat(),
+        "source_count": source_count,
+        "copied_count": copied_count,
+        "skipped_count": skipped_count,
+        "destination": str(destination_dir),
+    }
+
+    receipt_body = [
+        "# Librarian Retrieval Receipt",
+        "",
+        "## Summary",
+        f"- Packet: `{packet_id}`",
+        f"- Executed: `{executed}`",
+        f"- Source count: `{source_count}`",
+        f"- Copied: `{copied_count}`",
+        f"- Skipped: `{skipped_count}`",
+        f"- Destination: `{destination_dir}`",
+        f"- Generated: `{datetime.now().isoformat()}`",
+        "",
+        "## Copied Files",
+        "",
+        "| Source | Destination | Size |",
+        "|---|---|---|",
+    ]
+    for source, resolved, dest, size in copied_files:
+        receipt_body.append(f"| {source} | {dest} | {size} |")
+
+    receipt_body.extend([
+        "",
+        "## Skipped Files",
+        "",
+        "| Source | Reason |",
+        "|---|---|",
+    ])
+    for source, resolved, reason, dest in skipped_files:
+        receipt_body.append(f"| {source} | {reason} | ")
+
+    receipt_body.extend([
+        "",
+        "## Safety Notes",
+        "",
+        "- This command copied files only.",
+        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not write inside the archive root.",
+        "- Originals remain in place.",
+    ])
+
+    if args.execute or local_receipt_path.parent.exists():
+        write_markdown_with_frontmatter(local_receipt_path, receipt_frontmatter, receipt_body)
+        print(f"Wrote local retrieval receipt: {local_receipt_path}")
+    else:
+        print(f"Did not write local receipt because destination folder does not exist: {local_receipt_path.parent}")
+
+    write_markdown_with_frontmatter(blue_book_receipt_path, receipt_frontmatter, receipt_body)
+    print(f"Wrote Blue Book retrieval receipt: {blue_book_receipt_path}")
 
 
 def librarian_approve_execution(args):
@@ -8921,6 +9157,13 @@ def main():
     librarian_approve_execution_p.add_argument("packet_id")
     librarian_approve_execution_p.add_argument("--approval", required=True)
     librarian_approve_execution_p.set_defaults(func=librarian_approve_execution)
+
+    librarian_retrieve_p = librarian_sub.add_parser("retrieve")
+    librarian_retrieve_p.add_argument("packet_id")
+    retrieve_mode_group = librarian_retrieve_p.add_mutually_exclusive_group(required=True)
+    retrieve_mode_group.add_argument("--dry-run", action="store_true")
+    retrieve_mode_group.add_argument("--execute", action="store_true")
+    librarian_retrieve_p.set_defaults(func=librarian_retrieve)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
