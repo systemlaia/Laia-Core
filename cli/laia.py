@@ -2105,6 +2105,142 @@ def librarian_report(_args=None):
     print(f"Wrote Librarian manifest report: {report_path}")
 
 
+def librarian_compare(_args=None):
+    """Compare two most recent timestamped librarian manifests and write a report."""
+    import re
+
+    manifest_dir = get_librarian_manifest_dir()
+    if not manifest_dir.exists():
+        print("Need at least two timestamped Librarian manifests. Run: laia librarian scan twice.")
+        return
+
+    pattern = re.compile(r"^manifest-(\d{8}-\d{6})\.json$")
+    timestamped = []
+    for p in manifest_dir.iterdir():
+        if not p.is_file():
+            continue
+        m = pattern.match(p.name)
+        if m:
+            timestamped.append((m.group(1), p))
+
+    if len(timestamped) < 2:
+        print("Need at least two timestamped Librarian manifests. Run: laia librarian scan twice.")
+        return
+
+    timestamped.sort(key=lambda t: t[0])
+    base_ts, base_path = timestamped[-2]
+    head_ts, head_path = timestamped[-1]
+
+    base_manifest = load_json_file(base_path)
+    head_manifest = load_json_file(head_path)
+    if not isinstance(base_manifest, dict) or not isinstance(head_manifest, dict):
+        print("Unable to load manifest JSON files for comparison.")
+        return
+
+    base_map = {f.get("relative_path"): f for f in base_manifest.get("files", [])}
+    head_map = {f.get("relative_path"): f for f in head_manifest.get("files", [])}
+
+    added_keys = [k for k in head_map.keys() if k not in base_map]
+    removed_keys = [k for k in base_map.keys() if k not in head_map]
+    changed_keys = []
+    for k in (set(base_map.keys()) & set(head_map.keys())):
+        base_f = base_map.get(k) or {}
+        head_f = head_map.get(k) or {}
+        if (base_f.get("size_bytes") != head_f.get("size_bytes")) or (
+            base_f.get("modified_at") != head_f.get("modified_at")
+        ):
+            changed_keys.append(k)
+
+    added = [head_map[k] for k in added_keys]
+    removed = [base_map[k] for k in removed_keys]
+    changed = [(base_map[k], head_map[k]) for k in changed_keys]
+
+    report_id = "librarian-compare-report"
+    report_path = get_report_vault_dir() / f"{report_id}.md"
+
+    front = {
+        "type": "report",
+        "report_id": report_id,
+        "project": "LAIA Librarian",
+        "report_type": "manifest_compare",
+        "status": "active",
+        "updated": datetime.now().isoformat(),
+        "base_manifest": base_path.name,
+        "head_manifest": head_path.name,
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
+    }
+
+    body = []
+    body.append("# Librarian Manifest Compare Report")
+    body.append("")
+    body.append("## Summary")
+    body.append(f"- Base manifest: `{base_path.name}`")
+    body.append(f"- Head manifest: `{head_path.name}`")
+    body.append(f"- Added: `{len(added)}`")
+    body.append(f"- Removed: `{len(removed)}`")
+    body.append(f"- Changed: `{len(changed)}`")
+    body.append("")
+
+    def limited_table_intro(title, rows, cols):
+        body.append(f"## {title}")
+        body.append("")
+        if not rows:
+            body.append("- None")
+            body.append("")
+            return
+        body.append(cols)
+        body.append("|---|---:|---|")
+        for r in rows[:50]:
+            body.append(r)
+        if len(rows) > 50:
+            body.append("...more rows omitted...")
+        body.append("")
+
+    added_rows = [f"| {f.get('relative_path')} | {format_bytes(f.get('size_bytes',0))} | {f.get('modified_at')} |" for f in added]
+    limited_table_intro("Added Files", added_rows, "| File | Size | Modified |")
+
+    removed_rows = [f"| {f.get('relative_path')} | {format_bytes(f.get('size_bytes',0))} | {f.get('modified_at')} |" for f in removed]
+    limited_table_intro("Removed Files", removed_rows, "| File | Size | Modified |")
+
+    changed_rows = [
+        "| {} | {} | {} | {} | {} |".format(
+            a.get('relative_path'),
+            format_bytes(a.get('size_bytes',0)),
+            format_bytes(b.get('size_bytes',0)),
+            a.get('modified_at',''),
+            b.get('modified_at',''),
+        )
+        for a, b in changed
+    ]
+    def changed_table_intro():
+        body.append("## Changed Files")
+        body.append("")
+        if not changed_rows:
+            body.append("- None")
+            body.append("")
+            return
+        body.append("| File | Old Size | New Size | Old Modified | New Modified |")
+        body.append("|---|---:|---:|---|---|")
+        for r in changed_rows[:50]:
+            body.append(r)
+        if len(changed_rows) > 50:
+            body.append("...more rows omitted...")
+        body.append("")
+    changed_table_intro()
+
+    body.append("## Notes")
+    body.append("")
+    body.append("- This is a read-only comparison.")
+    body.append("- No archive originals were moved, renamed, deleted, or modified.")
+    body.append("- Removed means “missing from latest manifest,” not confirmed deleted.")
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    write_markdown_with_frontmatter(report_path, front, body)
+    print(f"Wrote manifest compare report: {report_path}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -7415,6 +7551,9 @@ def main():
 
     librarian_report_p = librarian_sub.add_parser("report")
     librarian_report_p.set_defaults(func=librarian_report)
+
+    librarian_compare_p = librarian_sub.add_parser("compare")
+    librarian_compare_p.set_defaults(func=librarian_compare)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
