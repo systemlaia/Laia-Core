@@ -118,6 +118,13 @@ def save_packet_index(data: dict):
     index_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def get_decision_log_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-decisions.md"
+
+
 def get_packet_vault_dir() -> Path:
     vault_root = get_personal_os_vault_root()
     packet_dir = vault_root / "04_PACKETS"
@@ -129,8 +136,13 @@ def get_packet_note_path(packet_id: str) -> Path:
     return get_packet_vault_dir() / f"{packet_id}.md"
 
 
-def write_packet_note(packet: dict):
-    packet_note = get_packet_note_path(packet["packet_id"])
+def write_packet_note(packet: dict, vault_root: Path | None = None):
+    if vault_root is None:
+        packet_note = get_packet_note_path(packet["packet_id"])
+    else:
+        packet_note = Path(vault_root) / "04_PACKETS" / f"{packet['packet_id']}.md"
+        packet_note.parent.mkdir(parents=True, exist_ok=True)
+
     frontmatter = {
         "type": "packet",
         "packet_id": packet.get("packet_id", ""),
@@ -148,9 +160,22 @@ def write_packet_note(packet: dict):
         frontmatter["closed_at"] = packet["closed_at"]
     if packet.get("close_reason"):
         frontmatter["close_reason"] = packet["close_reason"]
+    if packet.get("decision"):
+        frontmatter["decision"] = packet["decision"]
+    if packet.get("decision_note"):
+        frontmatter["decision_note"] = packet["decision_note"]
+    if packet.get("proposed_action"):
+        frontmatter["proposed_action"] = packet["proposed_action"]
+    if packet.get("proposed_action_note"):
+        frontmatter["proposed_action_note"] = packet["proposed_action_note"]
+    if packet.get("proposed_action_at"):
+        frontmatter["proposed_action_at"] = packet["proposed_action_at"]
+    if packet.get("history") and isinstance(packet.get("history"), list):
+        frontmatter["history"] = packet["history"]
 
     source_paths = packet.get("source_paths") or []
     next_actions = packet.get("next_actions") or []
+    history_items = packet.get("history") if isinstance(packet.get("history"), list) else []
 
     body_lines = [
         f"# {packet.get('title', '')}",
@@ -167,6 +192,16 @@ def write_packet_note(packet: dict):
             f"**Closed At:** `{packet.get('closed_at', '')}`",
             f"**Close Reason:** `{packet.get('close_reason', '')}`",
         ])
+    if packet.get("decision"):
+        body_lines.append(f"**Decision:** `{packet.get('decision', '')}`")
+    if packet.get("decision_note"):
+        body_lines.append(f"**Decision Note:** `{packet.get('decision_note', '')}`")
+    if packet.get("proposed_action"):
+        body_lines.append(f"**Proposed Action:** `{packet.get('proposed_action', '')}`")
+    if packet.get("proposed_action_note"):
+        body_lines.append(f"**Proposed Action Note:** `{packet.get('proposed_action_note', '')}`")
+    if packet.get("proposed_action_at"):
+        body_lines.append(f"**Proposed Action At:** `{packet.get('proposed_action_at', '')}`")
     body_lines.extend([
         "",
         "## Summary",
@@ -191,6 +226,21 @@ def write_packet_note(packet: dict):
             body_lines.append(f"- {action}")
     else:
         body_lines.append("- None yet")
+
+    if history_items:
+        body_lines.extend([
+            "",
+            "## Packet History",
+            "",
+            "| Time | Event | Action/Decision | Note |",
+            "|---|---|---|---|",
+        ])
+        for entry in history_items[-20:]:
+            created_at = entry.get("created_at") or entry.get("decided_at") or ""
+            event = entry.get("event", "history")
+            action_or_decision = entry.get("action") or entry.get("decision") or ""
+            note = entry.get("note") or entry.get("decision_note") or ""
+            body_lines.append(f"| {created_at} | {event} | {action_or_decision} | {note} |")
 
     write_markdown_with_frontmatter(packet_note, frontmatter, body_lines)
 
@@ -253,6 +303,99 @@ def packet_close(args):
     save_packet_index(index)
     write_packet_note(packet)
     print(f"Closed packet: {packet_id}")
+
+
+def write_librarian_decision_log(index: dict):
+    decisions = []
+    for packet in index.get("packets", []) or []:
+        history_items = packet.get("history") or []
+        if not isinstance(history_items, list):
+            continue
+        for entry in history_items:
+            if not isinstance(entry, dict):
+                continue
+            decisions.append({
+                "decided_at": entry.get("decided_at", ""),
+                "packet_id": packet.get("packet_id", ""),
+                "decision": entry.get("decision", ""),
+                "note": entry.get("decision_note", ""),
+            })
+
+    decisions.sort(key=lambda item: item.get("decided_at", ""), reverse=True)
+    log_path = get_decision_log_path()
+    front = {
+        "type": "librarian_decisions",
+        "status": "active",
+        "updated": datetime.now().isoformat(),
+        "decision_count": len(decisions),
+    }
+    body = [
+        "# Librarian Decisions",
+        "",
+        "## Recent Decisions",
+        "",
+        "| Time | Packet | Decision | Note |",
+        "|---|---|---|---|",
+    ]
+    for entry in decisions[:200]:
+        body.append(f"| {entry['decided_at']} | {entry['packet_id']} | {entry['decision']} | {entry['note']} |")
+    if not decisions:
+        body.append("- None")
+    body.extend([
+        "",
+        "## Safety Notes",
+        "",
+        "- Decisions recorded here do not move, rename, delete, copy, or modify archive originals.",
+        "- Any future archive-changing action must require a separate explicit approval step.",
+    ])
+    write_markdown_with_frontmatter(log_path, front, body)
+    return log_path
+
+
+def librarian_decide(args):
+    allowed_decisions = {
+        "approve-review",
+        "needs-more-info",
+        "reject",
+        "defer",
+        "convert-to-project",
+        "convert-to-report",
+    }
+    packet_id = args.packet_id
+    decision = args.decision
+    note = args.note or ""
+
+    if decision not in allowed_decisions:
+        print(f"Invalid decision: {decision}")
+        print("Allowed decisions: " + ", ".join(sorted(allowed_decisions)))
+        return
+
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    history = packet.get("history")
+    if not isinstance(history, list):
+        history = []
+
+    entry = {
+        "decision": decision,
+        "decision_note": note,
+        "decided_at": datetime.now().isoformat(),
+    }
+    history.append(entry)
+    packet["history"] = history
+    packet["decision"] = decision
+    packet["decision_note"] = note
+    packet["updated"] = datetime.now().isoformat()
+
+    save_packet_index(index)
+    write_packet_note(packet, vault_root=get_blue_book_vault_root())
+    log_path = write_librarian_decision_log(index)
+
+    print(f"Recorded decision for packet: {packet_id}")
+    print(f"Decision log updated: {log_path}")
 
 
 def _mode_state_path() -> Path:
@@ -2630,6 +2773,264 @@ def librarian_suggest(args=None):
 
         write_markdown_with_frontmatter(suggestions_path, front, body)
         print(f"Wrote librarian suggestions: {suggestions_path}")
+
+
+def get_approvals_log_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-approvals.md"
+
+
+def get_actions_log_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-actions.md"
+
+
+def librarian_propose_action(args):
+    allowed_actions = {
+        "retrieve",
+        "create-report",
+        "create-project",
+        "rescan",
+        "compare",
+        "ignore",
+        "investigate",
+        "label-candidate",
+        "move-candidate",
+    }
+    packet_id = args.packet_id
+    action = args.action
+    note = args.note or ""
+
+    if action not in allowed_actions:
+        print(f"Invalid action: {action}")
+        print("Allowed actions: " + ", ".join(sorted(allowed_actions)))
+        return
+
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    history = packet.get("history")
+    if not isinstance(history, list):
+        history = []
+
+    entry = {
+        "event": "action_proposed",
+        "action": action,
+        "note": note,
+        "created_at": datetime.now().isoformat(),
+    }
+    history.append(entry)
+    packet["history"] = history
+    packet["proposed_action"] = action
+    packet["proposed_action_note"] = note
+    packet["proposed_action_at"] = datetime.now().isoformat()
+    packet["updated"] = datetime.now().isoformat()
+
+    save_packet_index(index)
+    write_packet_note(packet, vault_root=get_blue_book_vault_root())
+    print(f"Recorded proposed action for packet: {packet_id}")
+
+
+def librarian_actions(args=None):
+    index = load_packet_index()
+    packets = index.get("packets", []) or []
+    proposals = [p for p in packets if p.get("proposed_action")]
+
+    if not proposals:
+        print("No proposed Librarian actions found.")
+        return
+
+    print("Librarian proposed actions:")
+    print(f"Total proposed actions: {len(proposals)}")
+    print("")
+    print("| Packet | Title | Action | Status | Decision | Updated | Note |")
+    print("|---|---|---|---|---|---|---|")
+    for packet in proposals:
+        note = packet.get("proposed_action_note", "")
+        print(
+            f"| {packet.get('packet_id', '')} | {packet.get('title', '')} | {packet.get('proposed_action', '')} | {packet.get('status', '')} | {packet.get('decision', '') or 'undecided'} | {packet.get('updated', '')} | {note} |"
+        )
+
+    if getattr(args, "write", False):
+        actions_path = get_actions_log_path()
+        front = {
+            "type": "librarian_actions",
+            "status": "active",
+            "updated": datetime.now().isoformat(),
+            "action_count": len(proposals),
+        }
+
+        body = []
+        body.append("# Librarian Proposed Actions")
+        body.append("")
+        body.append("## Summary")
+        body.append(f"- Proposed actions: `{len(proposals)}`")
+        body.append(f"- Generated: `{datetime.now().isoformat()}`")
+        body.append("- Safety mode: proposal-only")
+        body.append("")
+        body.append("## Action Queue")
+        body.append("")
+        body.append("| Packet | Action | Status | Decision | Updated | Note |")
+        body.append("|---|---|---|---|---|---|")
+        for packet in proposals:
+            note = packet.get("proposed_action_note", "")
+            body.append(
+                f"| {packet.get('packet_id', '')} | {packet.get('proposed_action', '')} | {packet.get('status', '')} | {packet.get('decision', '') or 'undecided'} | {packet.get('updated', '')} | {note} |"
+            )
+        body.append("")
+        body.append("## Action Meanings")
+        body.append("")
+        body.append("- retrieve: prepare a retrieval packet or human file lookup; do not copy automatically.")
+        body.append("- create-report: create a written report from packet context.")
+        body.append("- create-project: convert packet into project structure.")
+        body.append("- rescan: run another manifest scan.")
+        body.append("- compare: compare manifests.")
+        body.append("- ignore: mark as not relevant for now.")
+        body.append("- investigate: inspect paths manually.")
+        body.append("- label-candidate: candidate for future labeling.")
+        body.append("- move-candidate: candidate only; does not move files.")
+        body.append("")
+        body.append("## Safety Rules")
+        body.append("")
+        body.append("- This command is proposal-only.")
+        body.append("- It does not move, rename, delete, copy, or modify archive originals.")
+        body.append("- move-candidate is not permission to move.")
+        body.append("- Any future archive-changing action must require a separate explicit approval step.")
+
+        write_markdown_with_frontmatter(actions_path, front, body)
+        print(f"Wrote librarian actions file: {actions_path}")
+
+
+def librarian_approvals(args=None):
+    index = load_packet_index()
+    packets = index.get("packets", []) or []
+    matching = []
+    for packet in packets:
+        packet_type = str(packet.get("packet_type", "")).lower()
+        project = str(packet.get("project", "")).strip()
+        status = str(packet.get("status", "")).lower()
+        source_paths = packet.get("source_paths") or []
+        type_match = packet_type in {"librarian", "librarian_change", "nas", "archive", "retrieval"}
+        project_match = project.lower() == "laia librarian"
+        status_match = status in {"review", "blocked", "complete"} and bool(source_paths)
+        if type_match or project_match or status_match:
+            matching.append(packet)
+
+    if not matching:
+        print("No Librarian approval packets found.")
+        return
+
+    groups = {
+        "approve-review": [],
+        "needs-more-info": [],
+        "reject": [],
+        "defer": [],
+        "convert-to-project": [],
+        "convert-to-report": [],
+        "undecided": [],
+    }
+
+    for packet in matching:
+        decision = str(packet.get("decision", "")).strip().lower()
+        if decision in groups and decision != "":
+            groups[decision].append(packet)
+        else:
+            groups["undecided"].append(packet)
+
+    approved_count = len(groups["approve-review"])
+    needs_more_info_count = len(groups["needs-more-info"])
+    rejected_count = len(groups["reject"])
+    deferred_count = len(groups["defer"])
+    undecided_count = len(groups["undecided"])
+
+    print("Librarian approval ledger:")
+    print(f"Total Librarian packets: {len(matching)}")
+    print(f"Approved for review: {approved_count}")
+    print(f"Needs more information: {needs_more_info_count}")
+    print(f"Rejected: {rejected_count}")
+    print(f"Deferred: {deferred_count}")
+    print(f"Undecided: {undecided_count}")
+    print("")
+
+    print("| Packet | Type | Status | Decision | Updated | Note |")
+    print("|---|---|---|---|---|---|")
+    for packet in matching:
+        note = packet.get("decision_note", "")
+        print(
+            f"| {packet.get('packet_id', '')} | {packet.get('packet_type', '')} | {packet.get('status', '')} | {packet.get('decision', '') or 'undecided'} | {packet.get('updated', '')} | {note} |"
+        )
+
+    if getattr(args, "write", False):
+        approvals_path = get_approvals_log_path()
+        front = {
+            "type": "librarian_approvals",
+            "status": "active",
+            "updated": datetime.now().isoformat(),
+            "packet_count": len(matching),
+            "approved_count": approved_count,
+            "needs_more_info_count": needs_more_info_count,
+            "rejected_count": rejected_count,
+            "deferred_count": deferred_count,
+            "undecided_count": undecided_count,
+        }
+
+        body = []
+        body.append("# Librarian Approval Ledger")
+        body.append("")
+        body.append("## Summary")
+        body.append(f"- Total Librarian packets: `{len(matching)}`")
+        body.append(f"- Approved for review: `{approved_count}`")
+        body.append(f"- Needs more information: `{needs_more_info_count}`")
+        body.append(f"- Rejected: `{rejected_count}`")
+        body.append(f"- Deferred: `{deferred_count}`")
+        body.append(f"- Undecided: `{undecided_count}`")
+        body.append(f"- Generated: `{datetime.now().isoformat()}`")
+        body.append("")
+        body.append("## Approval Table")
+        body.append("")
+        body.append("| Packet | Type | Status | Decision | Updated | Note |")
+        body.append("|---|---|---|---|---|---|")
+        for packet in matching:
+            note = packet.get("decision_note", "")
+            body.append(
+                f"| {packet.get('packet_id', '')} | {packet.get('packet_type', '')} | {packet.get('status', '')} | {packet.get('decision', '') or 'undecided'} | {packet.get('updated', '')} | {note} |"
+            )
+        body.append("")
+
+        def section_lines(key, title, description=None):
+            body.append(f"## {title}")
+            body.append("")
+            if description:
+                body.append(description)
+                body.append("")
+            if groups[key]:
+                for packet in groups[key]:
+                    body.append(f"- `{packet.get('packet_id', '')}` — {packet.get('title', '')} | {packet.get('status', '')} | {packet.get('decision_note', '')}")
+            else:
+                body.append("- None")
+            body.append("")
+
+        section_lines("approve-review", "Approved / Ready for Next Review")
+        section_lines("needs-more-info", "Needs More Information")
+        section_lines("reject", "Rejected / Not Relevant")
+        section_lines("defer", "Deferred")
+        section_lines("undecided", "Undecided")
+
+        body.append("## Safety Rules")
+        body.append("")
+        body.append("- This ledger is read-only.")
+        body.append("- This command does not move, rename, delete, copy, or modify archive originals.")
+        body.append("- Approval here is not permission to perform archive-changing actions.")
+        body.append("- Any future archive-changing action must require a separate explicit approval step.")
+
+        write_markdown_with_frontmatter(approvals_path, front, body)
+        print(f"Wrote librarian approvals ledger: {approvals_path}")
 
 
 def personal_os_dashboard(_args=None):
@@ -7959,6 +8360,26 @@ def main():
     librarian_suggest_p = librarian_sub.add_parser("suggest")
     librarian_suggest_p.add_argument("--write", action="store_true", dest="write")
     librarian_suggest_p.set_defaults(func=librarian_suggest)
+
+    librarian_propose_action_p = librarian_sub.add_parser("propose-action")
+    librarian_propose_action_p.add_argument("packet_id")
+    librarian_propose_action_p.add_argument("--action", required=True, choices=["retrieve", "create-report", "create-project", "rescan", "compare", "ignore", "investigate", "label-candidate", "move-candidate"])
+    librarian_propose_action_p.add_argument("--note", required=True)
+    librarian_propose_action_p.set_defaults(func=librarian_propose_action)
+
+    librarian_actions_p = librarian_sub.add_parser("actions")
+    librarian_actions_p.add_argument("--write", action="store_true", dest="write")
+    librarian_actions_p.set_defaults(func=librarian_actions)
+
+    librarian_approvals_p = librarian_sub.add_parser("approvals")
+    librarian_approvals_p.add_argument("--write", action="store_true", dest="write")
+    librarian_approvals_p.set_defaults(func=librarian_approvals)
+
+    librarian_decide_p = librarian_sub.add_parser("decide")
+    librarian_decide_p.add_argument("packet_id")
+    librarian_decide_p.add_argument("--decision", required=True, choices=["approve-review", "needs-more-info", "reject", "defer", "convert-to-project", "convert-to-report"])
+    librarian_decide_p.add_argument("--note", required=True)
+    librarian_decide_p.set_defaults(func=librarian_decide)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
