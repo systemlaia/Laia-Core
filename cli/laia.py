@@ -2342,6 +2342,107 @@ def librarian_compare(args=None):
         print(f"Created librarian change packet: {packet_id}")
 
 
+def librarian_review(args=None):
+    index = load_packet_index()
+    packets = index.get("packets", []) or []
+    matching = []
+    for packet in packets:
+        packet_type = str(packet.get("packet_type", "")).lower()
+        project = str(packet.get("project", "")).strip()
+        status = str(packet.get("status", "")).lower()
+        source_paths = packet.get("source_paths") or []
+        type_match = packet_type in {"librarian", "librarian_change", "nas", "archive", "retrieval"}
+        project_match = project.lower() == "laia librarian"
+        status_match = status in {"review", "blocked"} and bool(source_paths)
+        if type_match or project_match or status_match:
+            matching.append(packet)
+
+    if not matching:
+        print("No Librarian review packets found.")
+        return
+
+    review_packets = [p for p in matching if str(p.get("status", "")).lower() == "review"]
+    blocked_packets = [p for p in matching if str(p.get("status", "")).lower() == "blocked"]
+
+    print("Librarian review queue:")
+    print(f"Total matching packets: {len(matching)}")
+    print(f"Review packets: {len(review_packets)}")
+    print(f"Blocked packets: {len(blocked_packets)}")
+    print("")
+    print("| Packet | Title | Type | Status | Project | Updated | Next Actions |")
+    print("|---|---|---|---|---|---|---|")
+    for packet in matching:
+        next_actions_str = "; ".join([str(a) for a in (packet.get('next_actions') or []) if a])
+        print(
+            f"| {packet.get('packet_id', '')} | {packet.get('title', '')} | {packet.get('packet_type', '')} | {packet.get('status', '')} | {packet.get('project', '')} | {packet.get('updated', '')} | {next_actions_str} |"
+        )
+
+    next_actions = []
+    source_paths = []
+    for packet in matching:
+        for action in packet.get("next_actions") or []:
+            if action:
+                next_actions.append(action)
+        for path in packet.get("source_paths") or []:
+            if path:
+                source_paths.append(path)
+
+    if getattr(args, "write", False):
+        vault_root = get_blue_book_vault_root()
+        system_dir = vault_root / "07_SYSTEM"
+        system_dir.mkdir(parents=True, exist_ok=True)
+        review_path = system_dir / "librarian-review.md"
+
+        front = {
+            "type": "librarian_review",
+            "status": "active",
+            "updated": datetime.now().isoformat(),
+            "review_packet_count": len(matching),
+        }
+
+        body = []
+        body.append("# Librarian Review Queue")
+        body.append("")
+        body.append("## Summary")
+        body.append(f"- Review packets: `{len(review_packets)}`")
+        body.append(f"- Blocked packets: `{len(blocked_packets)}`")
+        body.append(f"- Generated: `{datetime.now().isoformat()}`")
+        body.append("")
+        body.append("## Review Packets")
+        body.append("")
+        body.append("| Packet | Title | Type | Status | Project | Updated | Next Actions |")
+        body.append("|---|---|---|---|---|---|---|")
+        for packet in matching:
+            next_actions_str = "; ".join([str(a) for a in (packet.get('next_actions') or []) if a])
+            body.append(
+                f"| {packet.get('packet_id', '')} | {packet.get('title', '')} | {packet.get('packet_type', '')} | {packet.get('status', '')} | {packet.get('project', '')} | {packet.get('updated', '')} | {next_actions_str} |"
+            )
+        body.append("")
+        body.append("## Next Actions")
+        body.append("")
+        if next_actions:
+            for action in next_actions:
+                body.append(f"- {action}")
+        else:
+            body.append("- None")
+        body.append("")
+        body.append("## Source Path Samples")
+        body.append("")
+        for path in source_paths[:25]:
+            body.append(f"- {path}")
+        if not source_paths:
+            body.append("- None")
+        body.append("")
+        body.append("## Safety Notes")
+        body.append("")
+        body.append("- This queue is read-only.")
+        body.append("- Do not move, rename, delete, or modify archive originals from this view.")
+        body.append("- Removed files in compare reports mean “missing from latest manifest,” not confirmed deleted.")
+
+        write_markdown_with_frontmatter(review_path, front, body)
+        print(f"Wrote librarian review queue: {review_path}")
+
+
 def personal_os_dashboard(_args=None):
     personal_md = LAIA_ROOT / "vault" / "01 Dashboard" / "personal-os.md"
     if not personal_md.exists():
@@ -7661,6 +7762,10 @@ def main():
 
     librarian_history_p = librarian_sub.add_parser("history")
     librarian_history_p.set_defaults(func=librarian_history)
+
+    librarian_review_p = librarian_sub.add_parser("review")
+    librarian_review_p.add_argument("--write", action="store_true", dest="write")
+    librarian_review_p.set_defaults(func=librarian_review)
 
     librarian_summary_p = librarian_sub.add_parser("summarize")
     librarian_summary_p.set_defaults(func=librarian_summarize)
