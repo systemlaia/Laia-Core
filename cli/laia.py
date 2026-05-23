@@ -2789,6 +2789,168 @@ def get_actions_log_path() -> Path:
     return system_dir / "librarian-actions.md"
 
 
+def get_readiness_log_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    system_dir = vault_root / "07_SYSTEM"
+    system_dir.mkdir(parents=True, exist_ok=True)
+    return system_dir / "librarian-readiness.md"
+
+
+def evaluate_librarian_packet_readiness(packet: dict | None) -> tuple[bool, list[tuple[str, str, str]], list[str]]:
+    checks: list[tuple[str, str, str]] = []
+    blocking: list[str] = []
+
+    if packet is None:
+        checks.append(("Packet exists", "FAIL", "Packet not found in packet index."))
+        blocking.append("Packet does not exist")
+        return False, checks, blocking
+
+    packet_type = str(packet.get("packet_type", "")).lower()
+    project = str(packet.get("project", ""))
+    source_paths = packet.get("source_paths") or []
+    decision = str(packet.get("decision", "")).lower()
+    proposed_action = str(packet.get("proposed_action", ""))
+    status = str(packet.get("status", "")).lower()
+
+    is_librarian_type = packet_type in {
+        "librarian",
+        "librarian_change",
+        "nas",
+        "archive",
+        "retrieval",
+    }
+    has_source_paths = bool(source_paths)
+    is_librarian_project = project == "LAIA Librarian"
+
+    if is_librarian_type:
+        checks.append(("Packet is Librarian-related", "PASS", f"packet_type={packet_type}"))
+    elif is_librarian_project or has_source_paths:
+        details = []
+        if is_librarian_project:
+            details.append("project=LAIA Librarian")
+        if has_source_paths:
+            details.append(f"source_paths={len(source_paths)}")
+        checks.append(("Packet is Librarian-related", "WARN", "Not a known librarian packet type, but project/source_paths indicate relevance: " + ", ".join(details)))
+    else:
+        checks.append(("Packet is Librarian-related", "FAIL", f"packet_type={packet_type}, project={project}, source_paths={len(source_paths)}"))
+        blocking.append("Packet does not appear to be Librarian-related")
+
+    if has_source_paths:
+        checks.append(("Packet has source_paths", "PASS", f"{len(source_paths)} source path(s) found"))
+    else:
+        checks.append(("Packet has source_paths", "FAIL", "No source_paths recorded"))
+        blocking.append("Missing source_paths")
+
+    if decision:
+        checks.append(("Packet has a recorded decision", "PASS", f"decision={decision}"))
+    else:
+        checks.append(("Packet has a recorded decision", "FAIL", "No decision recorded"))
+        blocking.append("Missing decision")
+
+    if decision == "reject":
+        checks.append(("Decision is not reject", "FAIL", "Decision is reject"))
+        blocking.append("Decision is reject")
+    else:
+        checks.append(("Decision is not reject", "PASS", f"decision={decision or 'none'}"))
+
+    if decision == "needs-more-info":
+        checks.append(("Decision is not needs-more-info", "FAIL", "Decision is needs-more-info"))
+        blocking.append("Decision requires more information")
+    else:
+        checks.append(("Decision is not needs-more-info", "PASS", f"decision={decision or 'none'}"))
+
+    if proposed_action:
+        checks.append(("Packet has proposed_action", "PASS", f"proposed_action={proposed_action}"))
+    else:
+        checks.append(("Packet has proposed_action", "FAIL", "No proposed_action recorded"))
+        blocking.append("Missing proposed_action")
+
+    if proposed_action == "move-candidate" and decision != "approve-review":
+        checks.append(("Move-candidate requires approve-review", "FAIL", f"proposed_action=move-candidate, decision={decision or 'none'}"))
+        blocking.append("move-candidate action requires approve-review decision")
+    else:
+        checks.append(("Move-candidate rule", "PASS", f"proposed_action={proposed_action or 'none'}"))
+
+    if status in {"review", "active", "complete"}:
+        checks.append(("Packet status is review/active/complete", "PASS", f"status={status}"))
+    else:
+        checks.append(("Packet status is review/active/complete", "FAIL", f"status={status or 'none'}"))
+        blocking.append("Packet status is not review, active, or complete")
+
+    ready = len(blocking) == 0
+    return ready, checks, blocking
+
+
+def librarian_ready(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    ready, checks, blocking = evaluate_librarian_packet_readiness(packet)
+
+    print("| Check | Status | Detail |")
+    print("|---|---|---|")
+    for check, status, detail in checks:
+        print(f"| {check} | {status} | {detail} |")
+    print("")
+
+    if ready:
+        print("READY")
+        print("Packet is ready for a future explicitly approved action.")
+    else:
+        print("NOT READY")
+        print("Packet is not ready for an approved future action.")
+        if blocking:
+            print("")
+            print("Blocking issues:")
+            for item in blocking:
+                print(f"- {item}")
+
+    if getattr(args, "write", False):
+        readiness_path = get_readiness_log_path()
+        frontmatter = {
+            "type": "librarian_readiness",
+            "status": "active",
+            "packet_id": packet_id,
+            "ready": ready,
+            "updated": datetime.now().isoformat(),
+        }
+
+        body = [
+            "# Librarian Readiness Check",
+            "",
+            "## Summary",
+            f"- Packet: `{packet_id}`",
+            f"- Ready: `{ready}`",
+            f"- Generated: `{datetime.now().isoformat()}`",
+            "",
+            "## Checks",
+            "",
+            "| Check | Status | Detail |",
+            "|---|---|---|",
+        ]
+        for check, status, detail in checks:
+            body.append(f"| {check} | {status} | {detail} |")
+
+        body.append("")
+        body.append("## Blocking Issues")
+        body.append("")
+        if blocking:
+            for issue in blocking:
+                body.append(f"- {issue}")
+        else:
+            body.append("- None")
+
+        body.append("")
+        body.append("## Safety Rules")
+        body.append("")
+        body.append("- This command is read-only.")
+        body.append("- It does not move, rename, delete, copy, or modify archive originals.")
+        body.append("- READY means the packet is ready for a future explicitly approved action, not that action has been performed.")
+        body.append("- Any future archive-changing action must require a separate explicit command.")
+
+        write_markdown_with_frontmatter(readiness_path, frontmatter, body)
+        print(f"Wrote librarian readiness file: {readiness_path}")
+
+
 def librarian_propose_action(args):
     allowed_actions = {
         "retrieve",
@@ -8366,6 +8528,11 @@ def main():
     librarian_propose_action_p.add_argument("--action", required=True, choices=["retrieve", "create-report", "create-project", "rescan", "compare", "ignore", "investigate", "label-candidate", "move-candidate"])
     librarian_propose_action_p.add_argument("--note", required=True)
     librarian_propose_action_p.set_defaults(func=librarian_propose_action)
+
+    librarian_ready_p = librarian_sub.add_parser("ready")
+    librarian_ready_p.add_argument("packet_id")
+    librarian_ready_p.add_argument("--write", action="store_true", dest="write")
+    librarian_ready_p.set_defaults(func=librarian_ready)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
