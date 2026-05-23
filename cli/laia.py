@@ -3027,6 +3027,26 @@ def get_retrieval_verification_report_path() -> Path:
     return report_dir / "librarian-retrieval-verification-report.md"
 
 
+def get_retrieval_packet_note_path(packet_id: str) -> Path:
+    vault_root = get_blue_book_vault_root()
+    return vault_root / "04_PACKETS" / f"{packet_id}.md"
+
+
+def open_path(path: Path):
+    if not path.exists():
+        print(f"Path does not exist: {path}")
+        return False
+    if sys.platform == "darwin" and command_exists("open"):
+        try:
+            subprocess.run(["open", str(path)], check=False)
+            return True
+        except Exception as exc:
+            print(f"Unable to open {path}: {exc}")
+            return False
+    print(f"Path: {path}")
+    return True
+
+
 def resolve_packet_source_path(path_text: str, archive_root: Path) -> Path:
     source_path = Path(os.path.expanduser(path_text))
     return source_path if source_path.is_absolute() else archive_root / source_path
@@ -3668,6 +3688,49 @@ def librarian_verify_retrieval(args):
 
         write_markdown_with_frontmatter(report_path, report_frontmatter, report_body)
         print(f"Wrote verification report: {report_path}")
+
+
+def librarian_open_retrieval(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    retrieval_dir = LAIA_ROOT / "retrievals" / packet_id
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    blue_book_receipt_path = get_blue_book_retrieval_receipt_path()
+    packet_note_path = get_retrieval_packet_note_path(packet_id)
+    verification_report_path = get_blue_book_vault_root() / "05_REPORTS" / "librarian-retrieval-verification-report.md"
+
+    if args.receipt:
+        if local_receipt_path.exists():
+            open_path(local_receipt_path)
+            return
+        if blue_book_receipt_path.exists():
+            open_path(blue_book_receipt_path)
+            return
+        print("No retrieval receipt found locally or in Blue Book.")
+        print(f"Local receipt: {local_receipt_path}")
+        print(f"Blue Book receipt: {blue_book_receipt_path}")
+        return
+
+    if args.vault:
+        if packet_note_path.exists():
+            open_path(packet_note_path)
+        else:
+            print(f"Packet note missing: {packet_note_path}")
+        print(f"Retrieval receipt: {local_receipt_path}")
+        print(f"Blue Book receipt: {blue_book_receipt_path}")
+        print(f"Verification report: {verification_report_path}")
+        return
+
+    if retrieval_dir.exists() and retrieval_dir.is_dir():
+        open_path(retrieval_dir)
+        return
+
+    print(f"Retrieval folder is missing: {retrieval_dir}")
+    print("Run the retrieval command first or verify the packet destination.")
 
 
 def librarian_approve_execution(args):
@@ -9368,6 +9431,13 @@ def main():
     librarian_verify_retrieval_p.add_argument("packet_id")
     librarian_verify_retrieval_p.add_argument("--write", action="store_true", dest="write")
     librarian_verify_retrieval_p.set_defaults(func=librarian_verify_retrieval)
+
+    librarian_open_retrieval_p = librarian_sub.add_parser("open-retrieval")
+    librarian_open_retrieval_p.add_argument("packet_id")
+    open_mode_group = librarian_open_retrieval_p.add_mutually_exclusive_group()
+    open_mode_group.add_argument("--receipt", action="store_true", dest="receipt")
+    open_mode_group.add_argument("--vault", action="store_true", dest="vault")
+    librarian_open_retrieval_p.set_defaults(func=librarian_open_retrieval)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
