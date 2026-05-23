@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import subprocess
 import shutil
@@ -3019,6 +3020,51 @@ def get_blue_book_retrieval_receipt_path() -> Path:
     return system_dir / "librarian-retrieval-receipt.md"
 
 
+def get_retrieval_verification_report_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    report_dir = vault_root / "05_REPORTS"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "librarian-retrieval-verification-report.md"
+
+
+def resolve_packet_source_path(path_text: str, archive_root: Path) -> Path:
+    source_path = Path(os.path.expanduser(path_text))
+    return source_path if source_path.is_absolute() else archive_root / source_path
+
+
+def find_destination_for_source(source_path: Path, destination_dir: Path) -> Path | None:
+    expected_name = source_path.name
+    exact_path = destination_dir / expected_name
+    if exact_path.exists():
+        return exact_path
+
+    if not destination_dir.exists():
+        return None
+
+    stem = source_path.stem
+    suffix = source_path.suffix
+    candidates: list[Path] = []
+    for child in destination_dir.iterdir():
+        if not child.is_file():
+            continue
+        if child.name == expected_name:
+            return child
+        if child.suffix.lower() != suffix.lower():
+            continue
+        if child.stem == stem or child.stem.startswith(f"{stem}-copy-"):
+            candidates.append(child)
+
+    if not candidates:
+        return None
+
+    def copy_number(path: Path) -> int:
+        match = re.match(rf"^{re.escape(stem)}-copy-(\d+)$", path.stem)
+        return int(match.group(1)) if match else 0
+
+    candidates.sort(key=copy_number)
+    return candidates[0]
+
+
 def make_unique_destination_path(destination_dir: Path, source_path: Path) -> Path:
     destination_name = source_path.name
     candidate = destination_dir / destination_name
@@ -3469,6 +3515,159 @@ def librarian_retrieve(args):
 
     write_markdown_with_frontmatter(blue_book_receipt_path, receipt_frontmatter, receipt_body)
     print(f"Wrote Blue Book retrieval receipt: {blue_book_receipt_path}")
+
+
+def librarian_verify_retrieval(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    source_paths = packet.get("source_paths") or []
+    if not isinstance(source_paths, list):
+        source_paths = [source_paths]
+
+    archive_root = get_archive_root()
+    destination_dir = Path(packet.get("retrieval_destination", "")) if packet.get("retrieval_destination") else LAIA_ROOT / "retrievals" / packet_id
+    destination_dir = destination_dir.expanduser()
+
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    blue_book_receipt_path = get_blue_book_retrieval_receipt_path()
+
+    receipt_frontmatter = {}
+    if local_receipt_path.exists():
+        receipt_frontmatter, _ = load_frontmatter(local_receipt_path)
+
+    blue_book_frontmatter = {}
+    if blue_book_receipt_path.exists():
+        blue_book_frontmatter, _ = load_frontmatter(blue_book_receipt_path)
+
+    verification_rows = []
+    issues: list[str] = []
+    matched_count = 0
+
+    for path_text in source_paths:
+        resolved_path = resolve_packet_source_path(path_text, archive_root)
+        dest_path = find_destination_for_source(resolved_path, destination_dir)
+        source_exists = resolved_path.exists() and resolved_path.is_file()
+        destination_exists = dest_path is not None and dest_path.exists() and dest_path.is_file()
+
+        source_size = resolved_path.stat().st_size if source_exists else None
+        destination_size = dest_path.stat().st_size if destination_exists else None
+        size_match = source_size == destination_size if source_size is not None and destination_size is not None else False
+        source_mtime = datetime.fromtimestamp(resolved_path.stat().st_mtime).isoformat() if source_exists else ""
+        destination_mtime = datetime.fromtimestamp(dest_path.stat().st_mtime).isoformat() if destination_exists else ""
+        mtime_match = source_mtime == destination_mtime if source_mtime and destination_mtime else False
+
+        if not source_exists:
+            issues.append(f"Missing source: {resolved_path}")
+        elif not destination_exists:
+            issues.append(f"Missing destination for source: {resolved_path}")
+        elif not size_match:
+            issues.append(f"Size mismatch: {resolved_path.name} ({source_size} != {destination_size})")
+        elif not mtime_match:
+            issues.append(f"Modified-time mismatch: {resolved_path.name} ({source_mtime} != {destination_mtime})")
+        else:
+            matched_count += 1
+
+        verification_rows.append({
+            "source": path_text,
+            "resolved_source": str(resolved_path),
+            "destination": str(dest_path) if dest_path else "",
+            "source_exists": "yes" if source_exists else "no",
+            "destination_exists": "yes" if destination_exists else "no",
+            "source_size": str(source_size) if source_size is not None else "",
+            "destination_size": str(destination_size) if destination_size is not None else "",
+            "size_match": "yes" if size_match else "no",
+            "mtime_match": "yes" if mtime_match else "no",
+            "source_mtime": source_mtime,
+            "destination_mtime": destination_mtime,
+        })
+
+    source_count = len(source_paths)
+    failed_count = source_count - matched_count
+    verified = matched_count == source_count and source_count > 0
+
+    print("Librarian Retrieval Verification")
+    print(f"Packet: {packet_id}")
+    print(f"Destination: {destination_dir}")
+    print(f"Source count: {source_count}")
+    print(f"Matched: {matched_count}")
+    print(f"Failed: {failed_count}")
+    print("")
+
+    print("| Source | Resolved Source | Destination | Source Exists | Destination Exists | Source Size | Destination Size | Size Match | MTime Match |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for row in verification_rows:
+        print(f"| {row['source']} | {row['resolved_source']} | {row['destination']} | {row['source_exists']} | {row['destination_exists']} | {row['source_size']} | {row['destination_size']} | {row['size_match']} | {row['mtime_match']} |")
+
+    print("")
+    if issues:
+        print("Issues:")
+        for issue in issues:
+            print(f"- {issue}")
+        print("")
+    else:
+        print("Verification passed: all source files have matching retrieved copies.")
+        print("")
+
+    if args.write:
+        report_path = get_retrieval_verification_report_path()
+        report_status = "verified" if verified else "failed"
+        report_frontmatter = {
+            "type": "report",
+            "report_id": "librarian-retrieval-verification-report",
+            "project": "LAIA Librarian",
+            "report_type": "retrieval_verification",
+            "status": report_status,
+            "packet_id": packet_id,
+            "verified": verified,
+            "updated": datetime.now().isoformat(),
+            "source_count": source_count,
+            "matched_count": matched_count,
+            "failed_count": failed_count,
+        }
+
+        report_body = [
+            "# Librarian Retrieval Verification Report",
+            "",
+            "## Summary",
+            "",
+            f"- Packet: `{packet_id}`",
+            f"- Verified: `{verified}`",
+            f"- Source count: `{source_count}`",
+            f"- Matched: `{matched_count}`",
+            f"- Failed: `{failed_count}`",
+            f"- Destination: `{destination_dir}`",
+            f"- Generated: `{datetime.now().isoformat()}`",
+            "",
+            "## Verification Table",
+            "",
+            "| Source | Resolved Source | Destination | Source Exists | Destination Exists | Source Size | Destination Size | Size Match | MTime Match |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for row in verification_rows:
+            report_body.append(f"| {row['source']} | {row['resolved_source']} | {row['destination']} | {row['source_exists']} | {row['destination_exists']} | {row['source_size']} | {row['destination_size']} | {row['size_match']} | {row['mtime_match']} |")
+
+        report_body.extend(["", "## Issues", ""])
+        if issues:
+            for issue in issues:
+                report_body.append(f"- {issue}")
+        else:
+            report_body.append("- None")
+
+        report_body.extend([
+            "",
+            "## Safety Notes",
+            "",
+            "- This command is verification-only.",
+            "- It did not move, rename, delete, copy, or modify archive originals.",
+            "- It did not write inside the archive root.",
+        ])
+
+        write_markdown_with_frontmatter(report_path, report_frontmatter, report_body)
+        print(f"Wrote verification report: {report_path}")
 
 
 def librarian_approve_execution(args):
@@ -9164,6 +9363,11 @@ def main():
     retrieve_mode_group.add_argument("--dry-run", action="store_true")
     retrieve_mode_group.add_argument("--execute", action="store_true")
     librarian_retrieve_p.set_defaults(func=librarian_retrieve)
+
+    librarian_verify_retrieval_p = librarian_sub.add_parser("verify-retrieval")
+    librarian_verify_retrieval_p.add_argument("packet_id")
+    librarian_verify_retrieval_p.add_argument("--write", action="store_true", dest="write")
+    librarian_verify_retrieval_p.set_defaults(func=librarian_verify_retrieval)
 
     librarian_actions_p = librarian_sub.add_parser("actions")
     librarian_actions_p.add_argument("--write", action="store_true", dest="write")
