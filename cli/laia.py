@@ -162,6 +162,8 @@ def write_packet_note(packet: dict, vault_root: Path | None = None):
         frontmatter["closed_at"] = packet["closed_at"]
     if packet.get("close_reason"):
         frontmatter["close_reason"] = packet["close_reason"]
+    if packet.get("closure_status"):
+        frontmatter["closure_status"] = packet["closure_status"]
     if packet.get("decision"):
         frontmatter["decision"] = packet["decision"]
     if packet.get("decision_note"):
@@ -200,6 +202,8 @@ def write_packet_note(packet: dict, vault_root: Path | None = None):
             f"**Closed At:** `{packet.get('closed_at', '')}`",
             f"**Close Reason:** `{packet.get('close_reason', '')}`",
         ])
+    if packet.get("closure_status"):
+        body_lines.append(f"**Closure Status:** `{packet.get('closure_status', '')}`")
     if packet.get("decision"):
         body_lines.append(f"**Decision:** `{packet.get('decision', '')}`")
     if packet.get("decision_note"):
@@ -3053,6 +3057,13 @@ def get_retrieval_review_report_path() -> Path:
     return report_dir / "librarian-retrieval-review.md"
 
 
+def get_closure_report_path() -> Path:
+    vault_root = get_blue_book_vault_root()
+    report_dir = vault_root / "07_SYSTEM"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / "librarian-closure.md"
+
+
 def get_retrieval_outcome_report_path() -> Path:
     vault_root = get_blue_book_vault_root()
     report_dir = vault_root / "05_REPORTS"
@@ -4096,6 +4107,139 @@ def librarian_retrieval_project(args):
 
     write_markdown_with_frontmatter(project_path, frontmatter, body)
     print(f"Wrote retrieval project note: {project_path}")
+
+
+def librarian_close_packet(args):
+    packet_id = args.packet_id
+    reason = args.reason or ""
+    force = args.force
+
+    packet, index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    blue_receipt_path = get_blue_book_retrieval_receipt_path()
+    verification_path = get_retrieval_verification_report_path()
+    package_report_path = get_retrieval_package_report_path()
+    local_index_path = get_retrieval_index_path(packet_id)
+    review_report_path = get_retrieval_review_report_path()
+    outcome_report_path = get_retrieval_outcome_report_path()
+    project_note_path = get_retrieval_project_note_path(packet_id)
+
+    retrieval_receipt_exists = local_receipt_path.exists() or blue_receipt_path.exists()
+    verification_exists = verification_path.exists()
+    package_exists = package_report_path.exists() or local_index_path.exists()
+    review_outcome_exists = bool(packet.get("retrieval_review_outcome")) or review_report_path.exists()
+    outcome_or_project_exists = outcome_report_path.exists() or project_note_path.exists()
+
+    missing = []
+    if not retrieval_receipt_exists:
+        missing.append("retrieval receipt")
+    if not verification_exists:
+        missing.append("retrieval verification report")
+    if not package_exists:
+        missing.append("retrieval package report or RETRIEVAL_INDEX.md")
+    if not review_outcome_exists:
+        missing.append("retrieval review outcome")
+    if not outcome_or_project_exists:
+        missing.append("retrieval outcome report or retrieval project")
+
+    closed_at = datetime.now().isoformat()
+    closure_path = get_closure_report_path()
+    closure_frontmatter = {
+        "type": "librarian_closure",
+        "status": "active",
+        "packet_id": packet_id,
+        "closed": closed_at,
+        "forced": bool(force),
+        "updated": closed_at,
+    }
+
+    closure_body = [
+        "# Librarian Packet Closure",
+        "",
+        "## Summary",
+        "",
+        f"- Packet: `{packet_id}`",
+        f"- Closed: `{closed_at}`",
+        f"- Forced: `{force}`",
+        f"- Reason: `{reason}`",
+        f"- Updated: `{closed_at}`",
+        "",
+        "## Closure Criteria",
+        "",
+        "| Artifact | Status | Detail |",
+        "|---|---|---|",
+        f"| Retrieval receipt | {'yes' if retrieval_receipt_exists else 'no'} | {local_receipt_path if local_receipt_path.exists() else blue_receipt_path if blue_receipt_path.exists() else 'missing'} |",
+        f"| Retrieval verification report | {'yes' if verification_exists else 'no'} | {verification_path if verification_exists else 'missing'} |",
+        f"| Retrieval package report or RETRIEVAL_INDEX.md | {'yes' if package_exists else 'no'} | {package_report_path if package_report_path.exists() else local_index_path if local_index_path.exists() else 'missing'} |",
+        f"| Retrieval review outcome | {'yes' if review_outcome_exists else 'no'} | {packet.get('retrieval_review_outcome', '') or (review_report_path if review_report_path.exists() else 'missing')} |",
+        f"| Retrieval outcome report or retrieval project | {'yes' if outcome_or_project_exists else 'no'} | {outcome_report_path if outcome_report_path.exists() else project_note_path if project_note_path.exists() else 'missing'} |",
+        "",
+        "## Closure Result",
+        "",
+    ]
+
+    if missing and not force:
+        closure_body.append("Packet is NOT READY TO CLOSE due to missing artifacts.")
+        closure_body.append("")
+        closure_body.append("Missing artifacts:")
+        closure_body.append("")
+        for artifact in missing:
+            closure_body.append(f"- {artifact}")
+        closure_body.append("")
+        closure_body.extend([
+            "## Safety Notes",
+            "",
+            "- This command records packet closure only.",
+            "- It did not move, rename, delete, copy, or modify archive originals.",
+            "- It did not write inside the archive root.",
+        ])
+        write_markdown_with_frontmatter(closure_path, closure_frontmatter, closure_body)
+        print("NOT READY TO CLOSE")
+        print("Missing closure artifacts:")
+        for artifact in missing:
+            print(f"- {artifact}")
+        print(f"Wrote closure status report: {closure_path}")
+        return
+
+    closure_body.append("Packet has been closed.")
+    if force and missing:
+        closure_body.append("Closed with force despite missing artifacts.")
+    closure_body.extend([
+        "",
+        "## Safety Notes",
+        "",
+        "- This command records packet closure only.",
+        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not write inside the archive root.",
+    ])
+
+    packet["status"] = "complete"
+    packet["closed_at"] = closed_at
+    packet["close_reason"] = reason
+    packet["closure_status"] = "complete"
+    packet["updated"] = closed_at
+
+    history = packet.get("history")
+    if not isinstance(history, list):
+        history = []
+    history.append({
+        "event": "librarian_packet_closed",
+        "reason": reason,
+        "forced": bool(force),
+        "created_at": closed_at,
+    })
+    packet["history"] = history
+
+    save_packet_index(index)
+    write_packet_note(packet, vault_root=get_blue_book_vault_root())
+    write_markdown_with_frontmatter(closure_path, closure_frontmatter, closure_body)
+
+    print(f"Closed packet: {packet_id}")
+    print(f"Wrote closure report: {closure_path}")
 
 
 def librarian_review_retrieval(args):
@@ -9948,6 +10092,12 @@ def main():
     librarian_retrieval_project_p = librarian_sub.add_parser("retrieval-project")
     librarian_retrieval_project_p.add_argument("packet_id")
     librarian_retrieval_project_p.set_defaults(func=librarian_retrieval_project)
+
+    librarian_close_packet_p = librarian_sub.add_parser("close-packet")
+    librarian_close_packet_p.add_argument("packet_id")
+    librarian_close_packet_p.add_argument("--reason", required=True)
+    librarian_close_packet_p.add_argument("--force", action="store_true", dest="force")
+    librarian_close_packet_p.set_defaults(func=librarian_close_packet)
 
     librarian_review_retrieval_p = librarian_sub.add_parser("review-retrieval")
     librarian_review_retrieval_p.add_argument("packet_id")
