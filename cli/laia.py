@@ -3060,6 +3060,13 @@ def get_retrieval_outcome_report_path() -> Path:
     return report_dir / "librarian-retrieval-outcome-report.md"
 
 
+def get_retrieval_project_note_path(packet_id: str) -> Path:
+    vault_root = get_blue_book_vault_root()
+    project_dir = vault_root / "02_PROJECTS"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return project_dir / f"librarian-retrieval-project-{packet_id}.md"
+
+
 def get_retrieval_index_path(packet_id: str) -> Path:
     return get_retrieval_destination(packet_id) / "RETRIEVAL_INDEX.md"
 
@@ -3978,6 +3985,117 @@ def librarian_retrieval_report(args):
 
     write_markdown_with_frontmatter(report_path, frontmatter, report_body)
     print(f"Wrote retrieval outcome report: {report_path}")
+
+
+def librarian_retrieval_project(args):
+    packet_id = args.packet_id
+    packet, _index = find_packet_record(packet_id)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    retrieval_dir = LAIA_ROOT / "retrievals" / packet_id
+    if not retrieval_dir.exists() or not retrieval_dir.is_dir():
+        print(f"Retrieval folder not found: {retrieval_dir}")
+        print(f"Run: laia librarian retrieve {packet_id} --execute")
+        return
+
+    project_path = get_retrieval_project_note_path(packet_id)
+    if project_path.exists():
+        print(f"Project note already exists: {project_path}")
+        return
+
+    files = []
+    for child in sorted(retrieval_dir.iterdir()):
+        if not child.is_file():
+            continue
+        if child.name in {"RETRIEVAL_INDEX.md", "retrieval-receipt.md", ".DS_Store"}:
+            continue
+        stat = child.stat()
+        files.append((child.name, stat.st_size, datetime.fromtimestamp(stat.st_mtime).isoformat()))
+
+    file_count = len(files)
+    total_bytes = sum(size for _, size, _ in files)
+
+    packet_note_path = get_retrieval_packet_note_path(packet_id)
+    local_index_path = get_retrieval_index_path(packet_id)
+    local_receipt_path = get_retrieval_receipt_path(packet_id)
+    verification_report_path = get_retrieval_verification_report_path()
+    outcome_report_path = get_retrieval_outcome_report_path()
+    review_report_path = get_retrieval_review_report_path()
+
+    frontmatter = {
+        "type": "project",
+        "status": "active",
+        "priority": "medium",
+        "project_type": "librarian_retrieval",
+        "packet_id": packet_id,
+        "created": datetime.now().isoformat(),
+        "updated": datetime.now().isoformat(),
+        "source": "LAIA Librarian",
+    }
+
+    body = [
+        f"# Project: Librarian Retrieval — {packet.get('title', '')}",
+        "",
+        "## Objective",
+        "",
+        "Review and process the copied retrieval set created from the Librarian packet.",
+        "",
+        "## Packet Context",
+        "",
+        f"- Packet: `{packet_id}`",
+        f"- Title: `{packet.get('title', '')}`",
+        f"- Packet type: `{packet.get('packet_type', '')}`",
+        f"- Status: `{packet.get('status', '')}`",
+        f"- Decision: `{packet.get('decision', '')}`",
+        f"- Proposed action: `{packet.get('proposed_action', '')}`",
+        f"- Retrieval review outcome: `{packet.get('retrieval_review_outcome', '')}`",
+        "",
+        "## Retrieved Set",
+        "",
+        f"- Retrieval folder: `{retrieval_dir}`",
+        f"- File count: `{file_count}`",
+        f"- Total size: `{total_bytes}`",
+        "",
+        "## Retrieved Files",
+        "",
+        "| File | Size | Modified |",
+        "|---|---|---|",
+    ]
+    for name, size, modified in files:
+        body.append(f"| {name} | {size} | {modified} |")
+    if not files:
+        body.append("| None | 0 | - |")
+
+    body.extend([
+        "",
+        "## Tasks",
+        "",
+        "- [ ] Open each retrieved file.",
+        "- [ ] Confirm the set matches the project intent.",
+        "- [ ] Decide whether files belong in a report, reference note, or future archive workflow.",
+        "- [ ] Record any privacy/security concerns.",
+        "- [ ] Close or update the source packet.",
+        "",
+        "## Related Artifacts",
+        "",
+        f"- Packet note: `{packet_note_path}`",
+        f"- Retrieval index: `{local_index_path}`",
+        f"- Retrieval receipt: `{local_receipt_path}`",
+        f"- Verification report: `{verification_report_path}`",
+        f"- Outcome report: `{outcome_report_path}`",
+        f"- Retrieval review: `{review_report_path}`",
+        "",
+        "## Safety Notes",
+        "",
+        "- This project describes copied retrieval files only.",
+        "- This command did not move, rename, delete, copy, or modify archive originals.",
+        "- This command did not write inside the archive root.",
+    ])
+
+    write_markdown_with_frontmatter(project_path, frontmatter, body)
+    print(f"Wrote retrieval project note: {project_path}")
 
 
 def librarian_review_retrieval(args):
@@ -9826,6 +9944,10 @@ def main():
     librarian_retrieval_report_p = librarian_sub.add_parser("retrieval-report")
     librarian_retrieval_report_p.add_argument("packet_id")
     librarian_retrieval_report_p.set_defaults(func=librarian_retrieval_report)
+
+    librarian_retrieval_project_p = librarian_sub.add_parser("retrieval-project")
+    librarian_retrieval_project_p.add_argument("packet_id")
+    librarian_retrieval_project_p.set_defaults(func=librarian_retrieval_project)
 
     librarian_review_retrieval_p = librarian_sub.add_parser("review-retrieval")
     librarian_review_retrieval_p.add_argument("packet_id")
