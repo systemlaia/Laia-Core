@@ -321,9 +321,41 @@
       "problemMatcher": []
     },
     {
+      "label": "OPENCLAW: Stop Gateway",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose down",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "OPENCLAW: Health Check",
       "type": "shell",
-      "command": "curl -fsS http://127.0.0.1:18789/healthz || curl -fsS http://127.0.0.1:18790/healthz || echo 'OpenClaw gateway not responding on 18789/18790'",
+      "command": "curl -s http://127.0.0.1:18789/healthz || echo 'OpenClaw gateway not responding on 18789'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW: Open Control UI",
+      "type": "shell",
+      "command": "open http://127.0.0.1:18789/",
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW: Show LAIA Shakedown Prompt",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && cat agent_tasks/openclaw-shakedown-prompt.md",
       "presentation": {
         "reveal": "always",
         "panel": "shared",
