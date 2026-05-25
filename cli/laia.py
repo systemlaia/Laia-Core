@@ -4146,16 +4146,45 @@ def librarian_close_packet(args):
     if not outcome_or_project_exists:
         missing.append("retrieval outcome report or retrieval project")
 
-    closed_at = datetime.now().isoformat()
+    ready_to_close = not missing or force
+    updated_at = datetime.now().isoformat()
+    closed_value = updated_at if ready_to_close else False
     closure_path = get_closure_report_path()
     closure_frontmatter = {
         "type": "librarian_closure",
         "status": "active",
         "packet_id": packet_id,
-        "closed": closed_at,
+        "closed": closed_value,
         "forced": bool(force),
-        "updated": closed_at,
+        "updated": updated_at,
     }
+    criteria_rows = [
+        (
+            "Retrieval receipt",
+            retrieval_receipt_exists,
+            local_receipt_path if local_receipt_path.exists() else blue_receipt_path if blue_receipt_path.exists() else "missing",
+        ),
+        (
+            "Retrieval verification report",
+            verification_exists,
+            verification_path if verification_exists else "missing",
+        ),
+        (
+            "Retrieval package report or RETRIEVAL_INDEX.md",
+            package_exists,
+            package_report_path if package_report_path.exists() else local_index_path if local_index_path.exists() else "missing",
+        ),
+        (
+            "Retrieval review outcome",
+            review_outcome_exists,
+            packet.get("retrieval_review_outcome", "") or (review_report_path if review_report_path.exists() else "missing"),
+        ),
+        (
+            "Retrieval outcome report or retrieval project",
+            outcome_or_project_exists,
+            outcome_report_path if outcome_report_path.exists() else project_note_path if project_note_path.exists() else "missing",
+        ),
+    ]
 
     closure_body = [
         "# Librarian Packet Closure",
@@ -4163,20 +4192,19 @@ def librarian_close_packet(args):
         "## Summary",
         "",
         f"- Packet: `{packet_id}`",
-        f"- Closed: `{closed_at}`",
+        f"- Closed: `{closed_value}`",
         f"- Forced: `{force}`",
         f"- Reason: `{reason}`",
-        f"- Updated: `{closed_at}`",
+        f"- Updated: `{updated_at}`",
         "",
         "## Closure Criteria",
         "",
         "| Artifact | Status | Detail |",
         "|---|---|---|",
-        f"| Retrieval receipt | {'yes' if retrieval_receipt_exists else 'no'} | {local_receipt_path if local_receipt_path.exists() else blue_receipt_path if blue_receipt_path.exists() else 'missing'} |",
-        f"| Retrieval verification report | {'yes' if verification_exists else 'no'} | {verification_path if verification_exists else 'missing'} |",
-        f"| Retrieval package report or RETRIEVAL_INDEX.md | {'yes' if package_exists else 'no'} | {package_report_path if package_report_path.exists() else local_index_path if local_index_path.exists() else 'missing'} |",
-        f"| Retrieval review outcome | {'yes' if review_outcome_exists else 'no'} | {packet.get('retrieval_review_outcome', '') or (review_report_path if review_report_path.exists() else 'missing')} |",
-        f"| Retrieval outcome report or retrieval project | {'yes' if outcome_or_project_exists else 'no'} | {outcome_report_path if outcome_report_path.exists() else project_note_path if project_note_path.exists() else 'missing'} |",
+        *[
+            f"| {artifact} | {'yes' if exists else 'no'} | {detail} |"
+            for artifact, exists, detail in criteria_rows
+        ],
         "",
         "## Closure Result",
         "",
@@ -4218,10 +4246,10 @@ def librarian_close_packet(args):
     ])
 
     packet["status"] = "complete"
-    packet["closed_at"] = closed_at
+    packet["closed_at"] = updated_at
     packet["close_reason"] = reason
     packet["closure_status"] = "complete"
-    packet["updated"] = closed_at
+    packet["updated"] = updated_at
 
     history = packet.get("history")
     if not isinstance(history, list):
@@ -4230,7 +4258,7 @@ def librarian_close_packet(args):
         "event": "librarian_packet_closed",
         "reason": reason,
         "forced": bool(force),
-        "created_at": closed_at,
+        "created_at": updated_at,
     })
     packet["history"] = history
 
