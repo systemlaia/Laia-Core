@@ -275,6 +275,74 @@
       "problemMatcher": []
     },
     {
+      "label": "AGENT: Smoke Test",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_smoke_test.sh",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "AGENT: Guard Check",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_guard_check.py",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "AGENT: Show Sample Task",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && cat agent_tasks/sample-fix-receipt-wording.md",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW: Start Gateway",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose up -d",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW: Health Check",
+      "type": "shell",
+      "command": "curl -fsS http://127.0.0.1:18789/healthz || curl -fsS http://127.0.0.1:18790/healthz || echo 'OpenClaw gateway not responding on 18789/18790'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW: Show LAIA Task Prompt",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && printf '%s\\n' 'Read AGENTS.md, then complete agent_tasks/sample-fix-receipt-wording.md. Edit only the allowed files. Preserve archive originals. Do not write inside /Volumes/Public. Do not run librarian retrieve --execute. Run scripts/agent_smoke_test.sh and scripts/agent_guard_check.py. Show git status -sb and git --no-pager diff. Do not commit.'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "NAS: Mount Public",
       "type": "shell",
       "command": "open smb://192.168.1.144/Public",
