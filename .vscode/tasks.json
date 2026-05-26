@@ -275,98 +275,9 @@
       "problemMatcher": []
     },
     {
-      "label": "AGENT: Smoke Test",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_smoke_test.sh",
-      "group": "test",
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "AGENT: Guard Check",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_guard_check.py",
-      "group": "test",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
       "label": "AGENT: Show Sample Task",
       "type": "shell",
       "command": "cd /Users/paulroberson/LAIA/core && cat agent_tasks/sample-fix-receipt-wording.md",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Start Gateway",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose up -d",
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Stop Gateway",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose down",
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Health Check",
-      "type": "shell",
-      "command": "curl -s http://127.0.0.1:18789/healthz || echo 'OpenClaw gateway not responding on 18789'",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Open Control UI",
-      "type": "shell",
-      "command": "open http://127.0.0.1:18789/",
-      "presentation": {
-        "reveal": "never",
-        "panel": "shared"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Show LAIA Shakedown Prompt",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/LAIA/core && cat agent_tasks/openclaw-shakedown-prompt.md",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared",
-        "clear": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OPENCLAW: Show LAIA Task Prompt",
-      "type": "shell",
-      "command": "cd /Users/paulroberson/LAIA/core && printf '%s\\n' 'Read AGENTS.md, then complete agent_tasks/sample-fix-receipt-wording.md. Edit only the allowed files. Preserve archive originals. Do not write inside /Volumes/Public. Do not run librarian retrieve --execute. Run scripts/agent_smoke_test.sh and scripts/agent_guard_check.py. Show git status -sb and git --no-pager diff. Do not commit.'",
       "presentation": {
         "reveal": "always",
         "panel": "shared",
@@ -427,6 +338,114 @@
         "reveal": "always",
         "panel": "shared",
         "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Start Gateway",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose --env-file .env.clean -f docker-compose.yml -f docker-compose.clean-laia.yml up -d --force-recreate --remove-orphans openclaw-gateway",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Stop Gateway",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose --env-file .env.clean -f docker-compose.yml -f docker-compose.clean-laia.yml down --remove-orphans",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Health Check",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose --env-file .env.clean -f docker-compose.yml -f docker-compose.clean-laia.yml ps && curl --connect-timeout 2 --max-time 10 -fsS http://127.0.0.1:18789/healthz",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Verify Mount",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose --env-file .env.clean -f docker-compose.yml -f docker-compose.clean-laia.yml exec openclaw-gateway sh -lc 'echo BOOTSTRAP=${OPENCLAW_LAIA_DISABLE_PLUGIN_BOOTSTRAP:-missing}; ls -la /workspace/laia-core | head'",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Open Control UI",
+      "type": "shell",
+      "command": "open http://127.0.0.1:18789/",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Logs",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/Projects/OpenClaw && docker compose --env-file .env.clean -f docker-compose.yml -f docker-compose.clean-laia.yml logs --tail=220 openclaw-gateway",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OPENCLAW LAIA: Show Shakedown Prompt",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && cat agent_tasks/openclaw-shakedown-prompt.md",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "AGENT: Smoke Test",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_smoke_test.sh",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "AGENT: Guard Check",
+      "type": "shell",
+      "command": "cd /Users/paulroberson/LAIA/core && scripts/agent_guard_check.py",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
       },
       "problemMatcher": []
     }

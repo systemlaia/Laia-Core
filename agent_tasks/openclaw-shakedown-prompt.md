@@ -1,28 +1,15 @@
-You are working in the LAIA Core repository at ~/LAIA/core.
+You are working in the LAIA Core repository at /workspace/laia-core.
 
 Read AGENTS.md first.
 
-Task file:
+Complete:
 agent_tasks/sample-fix-receipt-wording.md
 
-Goal:
-Fix the Librarian retrieval receipt wording in cli/laia.py.
-
-Required change:
-Replace:
-“It did not move, rename, delete, copy, or modify archive originals.”
-
-with:
-“It did not move, rename, delete, or modify archive originals. It copied approved files into a retrieval folder.”
-
-Allowed file:
-cli/laia.py
-
-Forbidden:
-- Do not write inside /Volumes/Public.
-- Do not modify archive originals.
-- Do not run librarian retrieve --execute.
-- Do not commit.
+Edit only allowed files.
+Do not write inside /Volumes/Public.
+Do not modify archive originals.
+Do not run librarian retrieve --execute.
+Do not commit.
 
 After editing, run:
 scripts/agent_smoke_test.sh
