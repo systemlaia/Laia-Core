@@ -3577,7 +3577,7 @@ def librarian_retrieve(args):
         "## Safety Notes",
         "",
         "- This command copied files only.",
-        "- It did not move, rename, delete, copy, or modify archive originals.",
+        "- It did not move, rename, delete, or modify archive originals. It copied approved files into a retrieval folder.",
         "- It did not write inside the archive root.",
         "- Originals remain in place.",
     ])
