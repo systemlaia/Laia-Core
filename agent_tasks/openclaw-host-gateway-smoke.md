@@ -11,6 +11,15 @@ The host-installed OpenClaw gateway passed a small smoke validation for LAIA Cor
 - OpenAI API auth through host gateway
 - Safe workspace path: `/Users/paulroberson/.openclaw/workspace`
 
+## Next validation step
+
+The next OpenClaw host-gateway validation should confirm the agent can safely handle an existing markdown/task file by:
+
+- Editing an existing markdown/task file.
+- Running `scripts/agent_smoke_test.sh`.
+- Running `scripts/agent_guard_check.py`.
+- Confirming `git status` shows only the intended markdown file changed.
+
 ## Safety Notes
 
 - No changes to `cli/laia.py` were required for this note.
