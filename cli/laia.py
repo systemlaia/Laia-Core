@@ -1265,6 +1265,55 @@ def test_model(args):
     print("")
 
 
+def run_local_script(script_name: str, script_args: list[str] | None = None):
+    script_path = REPO_ROOT / "Scripts" / script_name
+    if not script_path.exists():
+        print(f"Error: missing local cognition script: {script_path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    timeout_raw = os.environ.get("LAIA_LOCAL_SCRIPT_TIMEOUT", "90")
+    try:
+        timeout_seconds = int(timeout_raw)
+    except ValueError:
+        timeout_seconds = 90
+
+    try:
+        result = subprocess.run(
+            [str(script_path)] + (script_args or []),
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"Error: local cognition script timed out after {timeout_seconds}s: {script_path.name}",
+            file=sys.stderr,
+        )
+        raise SystemExit(124)
+
+    raise SystemExit(result.returncode)
+
+
+def local_help(args):
+    args.local_parser.print_help()
+    raise SystemExit(1)
+
+
+def local_tools(args):
+    run_local_script("laia_local_tools.sh")
+
+
+def local_classify(args):
+    run_local_script("laia_classify_local.sh", args.text)
+
+
+def local_review(args):
+    run_local_script("laia_review_local.sh", args.text)
+
+
+def local_route(args):
+    run_local_script("laia_route_local.sh", args.text)
+
+
 def dictation_note(args):
     raw_text = " ".join(args.text)
     cleaned = clean_note_text(raw_text, model="mistral")
@@ -9809,6 +9858,25 @@ def main():
     test_model_p = sub.add_parser("test-model")
     test_model_p.add_argument("model")
     test_model_p.add_argument("prompt", nargs="+")
+
+    local_p = sub.add_parser("local")
+    local_p.set_defaults(func=local_help, local_parser=local_p)
+    local_sub = local_p.add_subparsers(dest="subcommand")
+
+    local_tools_p = local_sub.add_parser("tools")
+    local_tools_p.set_defaults(func=local_tools)
+
+    local_classify_p = local_sub.add_parser("classify")
+    local_classify_p.add_argument("text", nargs="+")
+    local_classify_p.set_defaults(func=local_classify)
+
+    local_review_p = local_sub.add_parser("review")
+    local_review_p.add_argument("text", nargs="+")
+    local_review_p.set_defaults(func=local_review)
+
+    local_route_p = local_sub.add_parser("route")
+    local_route_p.add_argument("text", nargs="+")
+    local_route_p.set_defaults(func=local_route)
 
     dictation_p = sub.add_parser("dictation")
     dictation_sub = dictation_p.add_subparsers(dest="subcommand")
