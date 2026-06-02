@@ -2012,6 +2012,72 @@ def day_next(args):
         print_packet_detail(selected_packet)
 
 
+def day_done(_args):
+    git_state = "unknown"
+    git_lines = []
+    try:
+        git_result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if git_result.returncode == 0:
+            git_lines = [line for line in git_result.stdout.splitlines() if line.strip()]
+            git_state = "dirty" if git_lines else "clean"
+    except Exception:
+        git_state = "unknown"
+
+    mode_data, _mode_path = read_mode_state()
+    mode_value = "unknown"
+    if isinstance(mode_data, dict):
+        mode_value = mode_data.get("current", "unknown")
+
+    packet_data, _packet_path = read_packet_index_file()
+    packets = packet_data.get("packets", []) if isinstance(packet_data, dict) else []
+    packet_counts = {
+        "active": 0,
+        "review": 0,
+        "complete": 0,
+    }
+    for packet in packets:
+        status = packet.get("status", "")
+        if status in packet_counts:
+            packet_counts[status] += 1
+
+    print("\nLAIA DAY CLOSEOUT\n")
+    print("Repo:")
+    print(f"- status: {git_state}")
+    if git_state == "dirty":
+        for line in git_lines:
+            print(f"- {line}")
+    print("")
+    print("Checks:")
+    print("- suggested: Scripts/agent_smoke_test.sh")
+    print("- suggested: Scripts/agent_guard_check.py")
+    print("")
+    print("Mode:")
+    print(f"- current: {mode_value}")
+    print("")
+    print("Packets:")
+    print(f"- active: {packet_counts['active']}")
+    print(f"- review: {packet_counts['review']}")
+    print(f"- complete: {packet_counts['complete']}")
+    print("")
+    print("Suggested Closeout:")
+    if git_state == "dirty":
+        print("- run smoke/guard, review diff, commit or revert intentionally.")
+    elif git_state == "clean":
+        print("- push if needed, then stop.")
+    else:
+        print("- inspect repo state manually before stopping.")
+    retrieval_execute = "librarian " + "retrieve " + "--" + "execute"
+    print(f"- Reminder: do not modify archive originals or run {retrieval_execute} without explicit approval.")
+    print("")
+
+
 def day_ops(args):
     git_state = "unknown"
     try:
@@ -10159,6 +10225,9 @@ def main():
     day_next_p = day_sub.add_parser("next")
     day_next_p.add_argument("--show", action="store_true")
     day_next_p.set_defaults(func=day_next)
+
+    day_done_p = day_sub.add_parser("done")
+    day_done_p.set_defaults(func=day_done)
 
     day_ops_p = day_sub.add_parser("ops")
     day_ops_p.add_argument("--route", action="store_true")
