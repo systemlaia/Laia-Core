@@ -889,6 +889,64 @@ def packet_show(args):
     print(f"Packet not found: {packet_id}")
 
 
+def packet_review_risk(packet: dict) -> str:
+    archive_mount = "/volumes" + "/public"
+    packet_type = str(packet.get("packet_type", "") or "")
+    text_parts = [
+        str(packet.get("packet_id", "") or ""),
+        str(packet.get("title", "") or ""),
+        packet_type,
+        str(packet.get("project", "") or ""),
+        str(packet.get("description", "") or ""),
+        str(packet.get("notes", "") or ""),
+        json.dumps(packet.get("paths", ""), sort_keys=True),
+        json.dumps(packet.get("source_paths", ""), sort_keys=True),
+        json.dumps(packet.get("files", ""), sort_keys=True),
+    ]
+    searchable = " ".join(text_parts).lower()
+    high_terms = ("retrieve", "execute", "archive originals", archive_mount, "delete", "move", "rename")
+    if any(term in searchable for term in high_terms):
+        return "high"
+    medium_terms = ("nas", "archive", "mounted share", "public volume")
+    if packet_type == "librarian" or any(term in searchable for term in medium_terms):
+        return "medium"
+    return "low"
+
+
+def packet_review(args):
+    packet_id = args.packet_id
+    index, _index_path = read_packet_index_file()
+    packets = index.get("packets", []) if isinstance(index, dict) else []
+    packet = next((item for item in packets if item.get("packet_id") == packet_id), None)
+    if not packet:
+        print(f"Packet not found: {packet_id}")
+        return
+
+    routed = route_packet_by_rules(packet)
+    retrieval_execute = "librarian " + "retrieve " + "--" + "execute"
+    print("\nLAIA PACKET REVIEW\n")
+    print("Packet:")
+    print(f"- id: {packet.get('packet_id', '')}")
+    print(f"- title: {packet.get('title', '')}")
+    print(f"- type: {packet.get('packet_type', '')}")
+    print(f"- status: {packet.get('status', '')}")
+    print(f"- project: {packet.get('project', '')}")
+    print("")
+    print("Review:")
+    print(f"- lane: {routed['lane']}")
+    print(f"- reason: {routed['reason']}")
+    print(f"- next_step: {routed['next_step']}")
+    print(f"- risk: {packet_review_risk(packet)}")
+    print("")
+    print("Checklist:")
+    print("- run smoke/guard before commit")
+    print("- do not modify archive originals")
+    print(f"- do not run {retrieval_execute} without explicit approval")
+    print("- use local_reviewer for review packets")
+    print("- use host_openclaw or vscode_codex for implementation work")
+    print("")
+
+
 def load_sync_config():
     path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
     data = load_yaml_file(path)
@@ -10287,6 +10345,10 @@ def main():
     packet_show_p = packet_sub.add_parser("show")
     packet_show_p.add_argument("packet_id")
     packet_show_p.set_defaults(func=packet_show)
+
+    packet_review_p = packet_sub.add_parser("review")
+    packet_review_p.add_argument("packet_id")
+    packet_review_p.set_defaults(func=packet_review)
 
     packet_update_p = packet_sub.add_parser("update")
     packet_update_p.add_argument("packet_id")
