@@ -9,24 +9,48 @@ import signal
 import shutil
 from pathlib import Path
 from datetime import date, datetime
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import (
-    ollama_generate,
-    clean_note_text,
-    structure_task,
-    structure_meal,
-)
+def _missing_dependency(name: str):
+    def _raise(*_args, **_kwargs):
+        print(f"Error: missing dependency required for this command: {name}", file=sys.stderr)
+        raise SystemExit(1)
+    return _raise
+
+
+try:
+    from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
+except ImportError:
+    engine_sync_status = _missing_dependency("sync.engine")
+    engine_sync_run = _missing_dependency("sync.engine")
+
+try:
+    from core_client.ollama import (
+        ollama_generate,
+        clean_note_text,
+        structure_task,
+        structure_meal,
+    )
+except ImportError:
+    ollama_generate = _missing_dependency("core_client.ollama")
+    clean_note_text = _missing_dependency("core_client.ollama")
+    structure_task = _missing_dependency("core_client.ollama")
+    structure_meal = _missing_dependency("core_client.ollama")
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
 
 def load_frontmatter(path: Path):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     if not path.exists():
         return {}, ""
     text = path.read_text(encoding="utf-8")
@@ -69,6 +93,9 @@ def results_dir():
 
 
 def load_yaml_file(path: Path):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -92,6 +119,9 @@ def get_personal_os_vault_root() -> Path:
 
 
 def write_markdown_with_frontmatter(path: Path, frontmatter: dict, body_lines: list[str]):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     content = "---\n"
     content += yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
     content += "---\n\n"
@@ -1804,6 +1834,113 @@ def day_command(args):
 
     print("Focus:")
     focus_task(args)
+
+
+def day_ops(_args=None):
+    git_state = "unknown"
+    try:
+        git_result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if git_result.returncode == 0:
+            git_state = "dirty" if git_result.stdout.strip() else "clean"
+    except Exception:
+        git_state = "unknown"
+
+    local_scripts = [
+        REPO_ROOT / "Scripts" / "laia_local_tools.sh",
+        REPO_ROOT / "Scripts" / "laia_classify_local.sh",
+        REPO_ROOT / "Scripts" / "laia_review_local.sh",
+        REPO_ROOT / "Scripts" / "laia_route_local.sh",
+    ]
+    local_profiles = [
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-classifier.md",
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-reviewer.md",
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-router.md",
+    ]
+    scripts_status = "ready" if all(path.exists() for path in local_scripts) else "missing"
+    profiles_status = "ready" if all(path.exists() for path in local_profiles) else "missing"
+
+    ollama_path = shutil.which("ollama")
+    qwen_status = "unknown"
+    if ollama_path:
+        try:
+            ollama_result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            qwen_status = "yes" if "qwen2.5:7b" in (ollama_result.stdout or "") else "no"
+        except Exception:
+            qwen_status = "unknown"
+
+    packet_data, packet_path = read_packet_index_file()
+    packets = packet_data.get("packets", []) if isinstance(packet_data, dict) else []
+    packet_counts = {
+        "active": 0,
+        "review": 0,
+        "complete": 0,
+    }
+    for packet in packets:
+        status = packet.get("status", "")
+        if status in packet_counts:
+            packet_counts[status] += 1
+
+    relevant_packets = [
+        packet for packet in packets
+        if packet.get("status") in {"active", "review"}
+    ]
+    if not relevant_packets:
+        relevant_packets = packets[-5:]
+
+    mode_data, mode_path = read_mode_state()
+    mode_value = "unknown"
+    if isinstance(mode_data, dict):
+        mode_value = mode_data.get("current", "unknown")
+
+    print("\nLAIA MORNING OPS\n")
+    print("Repo:")
+    print(f"- status: {git_state}")
+    print("")
+    print("Local Cognition:")
+    print(f"- scripts: {scripts_status}")
+    print(f"- profiles: {profiles_status}")
+    print(f"- ollama: {'yes' if ollama_path else 'no'}")
+    print(f"- qwen2.5:7b: {qwen_status}")
+    print("")
+    print("Packets:")
+    print(f"- total: {len(packets)}")
+    print(f"- active: {packet_counts['active']}")
+    print(f"- review: {packet_counts['review']}")
+    print(f"- complete: {packet_counts['complete']}")
+    if packet_data is None:
+        print(f"- packet index: missing ({packet_path})")
+    else:
+        for packet in relevant_packets[:5]:
+            print(
+                f"- {packet.get('packet_id', '')} | {packet.get('title', '')} | "
+                f"{packet.get('status', '')} | {packet.get('packet_type', '')} | "
+                f"{packet.get('project', '')}"
+            )
+    print("")
+    print("Personal OS:")
+    print(f"- mode: {mode_value}")
+    print(f"- state file: {mode_path}")
+    print("")
+    print("Suggested Next Commands:")
+    print("- python3 cli/laia.py local status")
+    print("- python3 cli/laia.py packet list")
+    print("- python3 cli/laia.py mode show")
+    print("- Scripts/agent_smoke_test.sh")
+    print("- Scripts/agent_guard_check.py")
+    print("")
 
 
 def doctor(_args=None):
@@ -9803,7 +9940,13 @@ def main():
 
     sub.add_parser("briefing")
     sub.add_parser("doctor")
-    sub.add_parser("day")
+
+    day_p = sub.add_parser("day")
+    day_p.set_defaults(func=day_command)
+    day_sub = day_p.add_subparsers(dest="subcommand")
+
+    day_ops_p = day_sub.add_parser("ops")
+    day_ops_p.set_defaults(func=day_ops)
 
     # Personal OS commands (Phase 1)
     personal_os_p = sub.add_parser("personal-os")
@@ -10423,7 +10566,7 @@ def main():
     elif args.command == "doctor":
         doctor(args)
     elif args.command == "day":
-        day_command(args)
+        args.func(args)
     elif args.command == "focus":
         focus_task(args)
     elif args.command == "plan" and args.subcommand == "generate":
