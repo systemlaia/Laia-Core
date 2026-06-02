@@ -9,48 +9,24 @@ import signal
 import shutil
 from pathlib import Path
 from datetime import date, datetime
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-def _missing_dependency(name: str):
-    def _raise(*_args, **_kwargs):
-        print(f"Error: missing dependency required for this command: {name}", file=sys.stderr)
-        raise SystemExit(1)
-    return _raise
-
-
-try:
-    from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-except ImportError:
-    engine_sync_status = _missing_dependency("sync.engine")
-    engine_sync_run = _missing_dependency("sync.engine")
-
-try:
-    from core_client.ollama import (
-        ollama_generate,
-        clean_note_text,
-        structure_task,
-        structure_meal,
-    )
-except ImportError:
-    ollama_generate = _missing_dependency("core_client.ollama")
-    clean_note_text = _missing_dependency("core_client.ollama")
-    structure_task = _missing_dependency("core_client.ollama")
-    structure_meal = _missing_dependency("core_client.ollama")
+from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
+from core_client.ollama import (
+    ollama_generate,
+    clean_note_text,
+    structure_task,
+    structure_meal,
+)
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
 
 def load_frontmatter(path: Path):
-    if yaml is None:
-        print("Error: PyYAML is required for this command.", file=sys.stderr)
-        raise SystemExit(1)
     if not path.exists():
         return {}, ""
     text = path.read_text(encoding="utf-8")
@@ -93,9 +69,6 @@ def results_dir():
 
 
 def load_yaml_file(path: Path):
-    if yaml is None:
-        print("Error: PyYAML is required for this command.", file=sys.stderr)
-        raise SystemExit(1)
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -119,9 +92,6 @@ def get_personal_os_vault_root() -> Path:
 
 
 def write_markdown_with_frontmatter(path: Path, frontmatter: dict, body_lines: list[str]):
-    if yaml is None:
-        print("Error: PyYAML is required for this command.", file=sys.stderr)
-        raise SystemExit(1)
     content = "---\n"
     content += yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
     content += "---\n\n"
