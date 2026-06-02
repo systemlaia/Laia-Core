@@ -2049,7 +2049,7 @@ def day_next(args):
     print("")
     print("Recommended:")
     if not selected_packet:
-        print("- no active packet found")
+        print("- no active/review packet found")
         print("")
         return
 
