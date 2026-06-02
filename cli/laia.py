@@ -855,11 +855,32 @@ def packet_list(_args=None):
 
 def packet_show(args):
     packet_id = args.packet_id
-    index = load_packet_index()
-    packets = index.get("packets", [])
+    index, _index_path = read_packet_index_file()
+    packets = index.get("packets", []) if isinstance(index, dict) else []
     for packet in packets:
         if packet.get("packet_id") == packet_id:
-            print(json.dumps(packet, indent=2))
+            print("\nLAIA PACKET\n")
+            print(f"- packet: {packet.get('packet_id', '')}")
+            print(f"- title: {packet.get('title', '')}")
+            print(f"- type: {packet.get('packet_type', '')}")
+            print(f"- status: {packet.get('status', '')}")
+            print(f"- project: {packet.get('project', '')}")
+            for field in ("created", "updated"):
+                if packet.get(field):
+                    print(f"- {field}: {packet.get(field)}")
+            for field in ("description", "notes", "paths", "source_paths", "files"):
+                value = packet.get(field)
+                if not value:
+                    continue
+                print(f"- {field}:")
+                if isinstance(value, list):
+                    for item in value:
+                        print(f"  - {item}")
+                elif isinstance(value, dict):
+                    for line in json.dumps(value, indent=2).splitlines():
+                        print(f"  {line}")
+                else:
+                    print(f"  {value}")
             return
     print(f"Packet not found: {packet_id}")
 
