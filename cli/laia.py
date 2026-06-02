@@ -2066,15 +2066,15 @@ def day_done(_args):
     print(f"- review: {packet_counts['review']}")
     print(f"- complete: {packet_counts['complete']}")
     print("")
-    print("Suggested Closeout:")
-    if git_state == "dirty":
-        print("- run smoke/guard, review diff, commit or revert intentionally.")
-    elif git_state == "clean":
-        print("- push if needed, then stop.")
-    else:
-        print("- inspect repo state manually before stopping.")
+    print("Closeout Checklist:")
+    print("- run smoke test")
+    print("- run guard check")
+    print("- review diff")
+    print("- commit or revert intentionally")
+    print("- push if clean/committed")
+    print("- do not modify archive originals")
     retrieval_execute = "librarian " + "retrieve " + "--" + "execute"
-    print(f"- Reminder: do not modify archive originals or run {retrieval_execute} without explicit approval.")
+    print(f"- do not run {retrieval_execute} without explicit approval")
     print("")
 
 
