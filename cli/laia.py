@@ -1886,6 +1886,105 @@ def day_command(args):
     focus_task(args)
 
 
+def route_packet_by_rules(packet: dict) -> dict:
+    packet_type = str(packet.get("packet_type", "") or "")
+    status = str(packet.get("status", "") or "")
+    title = str(packet.get("title", "") or "")
+    project = str(packet.get("project", "") or "")
+    searchable = " ".join([title, packet_type, project]).lower()
+    archive_mount = "/volumes" + "/public"
+
+    if any(term in searchable for term in ("retrieve", "execute", "archive originals", archive_mount)):
+        return {
+            "lane": "human_only",
+            "reason": "packet references retrieval, execution, archive originals, or the archive mount",
+            "next_step": "Ask the human to review and approve the next action.",
+        }
+    if packet_type == "librarian_change":
+        return {
+            "lane": "local_reviewer",
+            "reason": "librarian change packets need local review before action",
+            "next_step": "Run local review checks and prepare a recommendation.",
+        }
+    if packet_type == "system" or "personal os" in project.lower():
+        return {
+            "lane": "local_reviewer",
+            "reason": "system and Personal OS packets need local review",
+            "next_step": "Run local review checks and summarize the safest next action.",
+        }
+    if packet_type == "librarian" and status == "complete":
+        return {
+            "lane": "local_reviewer",
+            "reason": "completed librarian packets should be reviewed locally",
+            "next_step": "Verify completion records and note any follow-up.",
+        }
+    return {
+        "lane": "host_openclaw",
+        "reason": "packet does not match local-review or human-only rules",
+        "next_step": "Route to host OpenClaw for implementation or follow-up.",
+    }
+
+
+def day_next(_args):
+    git_state = "unknown"
+    try:
+        git_result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if git_result.returncode == 0:
+            git_state = "dirty" if git_result.stdout.strip() else "clean"
+    except Exception:
+        git_state = "unknown"
+
+    packet_data, _packet_path = read_packet_index_file()
+    packets = packet_data.get("packets", []) if isinstance(packet_data, dict) else []
+    selected_packet = None
+    for preferred_status in ("active", "review"):
+        selected_packet = next(
+            (packet for packet in packets if packet.get("status") == preferred_status),
+            None,
+        )
+        if selected_packet:
+            break
+
+    mode_data, _mode_path = read_mode_state()
+    mode_value = "unknown"
+    if isinstance(mode_data, dict):
+        mode_value = mode_data.get("current", "unknown")
+
+    print("\nLAIA NEXT ACTION\n")
+    print("Repo:")
+    print(f"- status: {git_state}")
+    print("")
+    print("Mode:")
+    print(f"- current: {mode_value}")
+    print("")
+    print("Recommended:")
+    if not selected_packet:
+        print("- no active packet found")
+        print("")
+        return
+
+    routed = route_packet_by_rules(selected_packet)
+    lane = routed["lane"]
+    next_steps = {
+        "local_reviewer": "python3 cli/laia.py day ops --route",
+        "host_openclaw": "python3 cli/laia.py packet list",
+        "human_only": "Review packet manually before taking action.",
+    }
+    print(f"- packet: {selected_packet.get('packet_id', '')}")
+    print(f"- title: {selected_packet.get('title', '')}")
+    print(f"- lane: {lane}")
+    print(f"- reason: {routed['reason']}")
+    print(f"- next_step: {next_steps.get(lane, 'python3 cli/laia.py packet list')}")
+    print("")
+
+
 def day_ops(args):
     git_state = "unknown"
     try:
@@ -1967,7 +2066,8 @@ def day_ops(args):
                 f"{packet.get('project', '')}"
             )
     route_limit_arg = getattr(args, "route_limit", None)
-    route_enabled = getattr(args, "route", False) or route_limit_arg is not None
+    route_ai_enabled = getattr(args, "route_ai", False)
+    route_enabled = getattr(args, "route", False) or route_ai_enabled or route_limit_arg is not None
     if route_enabled:
         route_limit = 1 if route_limit_arg is None else max(1, min(5, route_limit_arg))
         route_targets = [
@@ -1978,6 +2078,14 @@ def day_ops(args):
         print("Routing:")
         if not route_targets:
             print("- no active/review packets to route")
+        if not route_ai_enabled:
+            for packet in route_targets:
+                routed = route_packet_by_rules(packet)
+                print(f"- {packet.get('packet_id', 'packet')}:")
+                print(f"  lane: {routed['lane']}")
+                print(f"  reason: {routed['reason']}")
+                print(f"  next_step: {routed['next_step']}")
+            route_targets = []
         route_jobs = []
         for packet in route_targets:
             packet_description = (
@@ -10021,8 +10129,12 @@ def main():
     day_p.set_defaults(func=day_command)
     day_sub = day_p.add_subparsers(dest="subcommand")
 
+    day_next_p = day_sub.add_parser("next")
+    day_next_p.set_defaults(func=day_next)
+
     day_ops_p = day_sub.add_parser("ops")
     day_ops_p.add_argument("--route", action="store_true")
+    day_ops_p.add_argument("--route-ai", action="store_true")
     day_ops_p.add_argument("--route-limit", type=int)
     day_ops_p.set_defaults(func=day_ops)
 
