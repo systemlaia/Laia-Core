@@ -947,6 +947,91 @@ def packet_review(args):
     print("")
 
 
+def receipt_ingest(args):
+    source_path = str(Path(args.path).expanduser())
+    created_at = datetime.now().isoformat()
+    packet_id = f"packet-receipt-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    index = load_packet_index()
+    existing_ids = {packet.get("packet_id") for packet in index.get("packets", [])}
+    if packet_id in existing_ids:
+        print(f"Packet already exists: {packet_id}")
+        return
+
+    packet = {
+        "packet_id": packet_id,
+        "title": f"Receipt intake {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "packet_type": "receipt",
+        "status": "draft",
+        "project": "LAIA Grocy",
+        "created": created_at,
+        "updated": created_at,
+        "summary": "Draft receipt packet created from a source file reference. No OCR or Grocy write has run.",
+        "source_paths": [source_path],
+        "next_actions": ["Review receipt packet before any Grocy apply action."],
+        "vendor": "",
+        "date": "",
+        "total": "",
+        "items": [],
+        "tax": "",
+        "payment_hint": "",
+        "receipt_image_path": source_path,
+        "extraction_status": "pending",
+        "review_status": "pending",
+        "proposed_grocy_actions": [],
+        "safety_flags": [
+            "no_grocy_write",
+            "source_file_reference_only",
+            "human_review_required",
+        ],
+    }
+
+    index["packets"].append(packet)
+    save_packet_index(index)
+
+    packet_note = get_packet_note_path(packet_id)
+    body_lines = [
+        "---",
+        json.dumps(packet, indent=2),
+        "---",
+        "",
+        f"# {packet['title']}",
+        "",
+        f"**Packet ID:** `{packet_id}`",
+        "**Type:** `receipt`",
+        "**Status:** `draft`",
+        "**Project:** `LAIA Grocy`",
+        "",
+        "## Receipt",
+        "",
+        f"- Source: `{source_path}`",
+        "- Extraction status: `pending`",
+        "- Review status: `pending`",
+        "- Proposed Grocy actions: none",
+        "",
+        "## Safety",
+        "",
+        "- Source file reference only.",
+        "- Grocy not called.",
+        "- Human review required before apply.",
+    ]
+    with packet_note.open("w", encoding="utf-8") as note_file:
+        note_file.write("\n".join(body_lines) + "\n")
+
+    print("\nLAIA RECEIPT INGEST\n")
+    print("Packet:")
+    print(f"- id: {packet_id}")
+    print("- status: draft")
+    print(f"- source: {source_path}")
+    print(f"- index: {get_packet_index_path()}")
+    print(f"- packet_file: {packet_note}")
+    print("")
+    print("Safety:")
+    print("- source file not modified")
+    print("- Grocy not called")
+    print("- human review required before apply")
+    print("")
+
+
 def load_sync_config():
     path = LAIA_ROOT / "core" / "configs" / "sync-config.yaml"
     data = load_yaml_file(path)
@@ -10363,6 +10448,13 @@ def main():
     packet_close_p.add_argument("packet_id")
     packet_close_p.add_argument("--reason", default="", dest="reason")
     packet_close_p.set_defaults(func=packet_close)
+
+    receipt_p = sub.add_parser("receipt")
+    receipt_sub = receipt_p.add_subparsers(dest="subcommand")
+
+    receipt_ingest_p = receipt_sub.add_parser("ingest")
+    receipt_ingest_p.add_argument("path")
+    receipt_ingest_p.set_defaults(func=receipt_ingest)
 
     agent_p = sub.add_parser("agent")
     agent_sub = agent_p.add_subparsers(dest="subcommand")
