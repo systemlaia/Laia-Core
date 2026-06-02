@@ -9,24 +9,48 @@ import signal
 import shutil
 from pathlib import Path
 from datetime import date, datetime
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
-from core_client.ollama import (
-    ollama_generate,
-    clean_note_text,
-    structure_task,
-    structure_meal,
-)
+def _missing_dependency(name: str):
+    def _raise(*_args, **_kwargs):
+        print(f"Error: missing dependency required for this command: {name}", file=sys.stderr)
+        raise SystemExit(1)
+    return _raise
+
+
+try:
+    from sync.engine import sync_status as engine_sync_status, sync_run as engine_sync_run
+except ImportError:
+    engine_sync_status = _missing_dependency("sync.engine")
+    engine_sync_run = _missing_dependency("sync.engine")
+
+try:
+    from core_client.ollama import (
+        ollama_generate,
+        clean_note_text,
+        structure_task,
+        structure_meal,
+    )
+except ImportError:
+    ollama_generate = _missing_dependency("core_client.ollama")
+    clean_note_text = _missing_dependency("core_client.ollama")
+    structure_task = _missing_dependency("core_client.ollama")
+    structure_meal = _missing_dependency("core_client.ollama")
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
 
 def load_frontmatter(path: Path):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     if not path.exists():
         return {}, ""
     text = path.read_text(encoding="utf-8")
@@ -69,6 +93,9 @@ def results_dir():
 
 
 def load_yaml_file(path: Path):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -92,6 +119,9 @@ def get_personal_os_vault_root() -> Path:
 
 
 def write_markdown_with_frontmatter(path: Path, frontmatter: dict, body_lines: list[str]):
+    if yaml is None:
+        print("Error: PyYAML is required for this command.", file=sys.stderr)
+        raise SystemExit(1)
     content = "---\n"
     content += yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
     content += "---\n\n"
@@ -1307,6 +1337,76 @@ def local_help(args):
 
 def local_tools(args):
     run_local_script("laia_local_tools.sh")
+
+
+def local_status(args):
+    timeout_raw = os.environ.get("LAIA_LOCAL_SCRIPT_TIMEOUT", "90")
+    try:
+        timeout_seconds = int(timeout_raw)
+    except ValueError:
+        timeout_seconds = 90
+
+    script_paths = [
+        REPO_ROOT / "Scripts" / "laia_local_tools.sh",
+        REPO_ROOT / "Scripts" / "laia_classify_local.sh",
+        REPO_ROOT / "Scripts" / "laia_review_local.sh",
+        REPO_ROOT / "Scripts" / "laia_route_local.sh",
+    ]
+    profile_paths = [
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-classifier.md",
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-reviewer.md",
+        REPO_ROOT / "local_models" / "profiles" / "laia-qwen-router.md",
+    ]
+
+    ollama_path = shutil.which("ollama")
+    qwen_available = "unknown"
+    if ollama_path:
+        try:
+            result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            qwen_available = "yes" if "qwen2.5:7b" in (result.stdout or "") else "no"
+        except subprocess.TimeoutExpired:
+            qwen_available = "unknown (ollama list timed out)"
+        except Exception:
+            qwen_available = "unknown (ollama list failed)"
+    else:
+        qwen_available = "unknown (ollama unavailable)"
+
+    git_state = "unknown"
+    try:
+        git_result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if git_result.returncode == 0:
+            git_state = "dirty" if git_result.stdout.strip() else "clean"
+    except Exception:
+        git_state = "unknown (git status failed)"
+
+    print("\nLAIA LOCAL COGNITION STATUS\n")
+    print(f"Default timeout: {timeout_seconds}s")
+    print("")
+    print("Scripts:")
+    for path in script_paths:
+        print(f"- {path.relative_to(REPO_ROOT)}: {'yes' if path.exists() else 'no'}")
+    print("")
+    print("Profiles:")
+    for path in profile_paths:
+        print(f"- {path.relative_to(REPO_ROOT)}: {'yes' if path.exists() else 'no'}")
+    print("")
+    print(f"Ollama on PATH: {'yes' if ollama_path else 'no'}")
+    print(f"qwen2.5:7b in ollama list: {qwen_available}")
+    print(f"Git status: {git_state}")
+    print("")
 
 
 def local_classify(args):
@@ -9872,6 +9972,9 @@ def main():
 
     local_tools_p = local_sub.add_parser("tools")
     local_tools_p.set_defaults(func=local_tools)
+
+    local_status_p = local_sub.add_parser("status")
+    local_status_p.set_defaults(func=local_status)
 
     local_classify_p = local_sub.add_parser("classify")
     local_classify_p.add_argument("text", nargs="+")
