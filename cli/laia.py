@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import subprocess
+import signal
 import shutil
 from pathlib import Path
 from datetime import date, datetime
@@ -1277,20 +1278,26 @@ def run_local_script(script_name: str, script_args: list[str] | None = None):
     except ValueError:
         timeout_seconds = 90
 
+    process = subprocess.Popen(
+        [str(script_path)] + (script_args or []),
+        start_new_session=True,
+    )
+
     try:
-        result = subprocess.run(
-            [str(script_path)] + (script_args or []),
-            check=False,
-            timeout=timeout_seconds,
-        )
+        returncode = process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
         print(
             f"Error: local cognition script timed out after {timeout_seconds}s: {script_path.name}",
             file=sys.stderr,
         )
         raise SystemExit(124)
 
-    raise SystemExit(result.returncode)
+    raise SystemExit(returncode)
 
 
 def local_help(args):
