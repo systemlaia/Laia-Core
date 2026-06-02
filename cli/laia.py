@@ -853,34 +853,38 @@ def packet_list(_args=None):
         )
 
 
+def print_packet_detail(packet: dict):
+    print("\nLAIA PACKET\n")
+    print(f"- packet: {packet.get('packet_id', '')}")
+    print(f"- title: {packet.get('title', '')}")
+    print(f"- type: {packet.get('packet_type', '')}")
+    print(f"- status: {packet.get('status', '')}")
+    print(f"- project: {packet.get('project', '')}")
+    for field in ("created", "updated"):
+        if packet.get(field):
+            print(f"- {field}: {packet.get(field)}")
+    for field in ("description", "notes", "paths", "source_paths", "files"):
+        value = packet.get(field)
+        if not value:
+            continue
+        print(f"- {field}:")
+        if isinstance(value, list):
+            for item in value:
+                print(f"  - {item}")
+        elif isinstance(value, dict):
+            for line in json.dumps(value, indent=2).splitlines():
+                print(f"  {line}")
+        else:
+            print(f"  {value}")
+
+
 def packet_show(args):
     packet_id = args.packet_id
     index, _index_path = read_packet_index_file()
     packets = index.get("packets", []) if isinstance(index, dict) else []
     for packet in packets:
         if packet.get("packet_id") == packet_id:
-            print("\nLAIA PACKET\n")
-            print(f"- packet: {packet.get('packet_id', '')}")
-            print(f"- title: {packet.get('title', '')}")
-            print(f"- type: {packet.get('packet_type', '')}")
-            print(f"- status: {packet.get('status', '')}")
-            print(f"- project: {packet.get('project', '')}")
-            for field in ("created", "updated"):
-                if packet.get(field):
-                    print(f"- {field}: {packet.get(field)}")
-            for field in ("description", "notes", "paths", "source_paths", "files"):
-                value = packet.get(field)
-                if not value:
-                    continue
-                print(f"- {field}:")
-                if isinstance(value, list):
-                    for item in value:
-                        print(f"  - {item}")
-                elif isinstance(value, dict):
-                    for line in json.dumps(value, indent=2).splitlines():
-                        print(f"  {line}")
-                else:
-                    print(f"  {value}")
+            print_packet_detail(packet)
             return
     print(f"Packet not found: {packet_id}")
 
@@ -1946,7 +1950,7 @@ def route_packet_by_rules(packet: dict) -> dict:
     }
 
 
-def day_next(_args):
+def day_next(args):
     git_state = "unknown"
     try:
         git_result = subprocess.run(
@@ -2004,6 +2008,8 @@ def day_next(_args):
     print(f"- reason: {routed['reason']}")
     print(f"- next_step: {next_steps.get(lane, 'python3 cli/laia.py packet list')}")
     print("")
+    if getattr(args, "show", False):
+        print_packet_detail(selected_packet)
 
 
 def day_ops(args):
@@ -10151,6 +10157,7 @@ def main():
     day_sub = day_p.add_subparsers(dest="subcommand")
 
     day_next_p = day_sub.add_parser("next")
+    day_next_p.add_argument("--show", action="store_true")
     day_next_p.set_defaults(func=day_next)
 
     day_ops_p = day_sub.add_parser("ops")
