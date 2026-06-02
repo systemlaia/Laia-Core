@@ -7,6 +7,7 @@ import sys
 import subprocess
 import signal
 import shutil
+import time
 from pathlib import Path
 from datetime import date, datetime
 try:
@@ -1296,17 +1297,29 @@ def test_model(args):
     print("")
 
 
+def local_script_timeout_seconds() -> int:
+    timeout_raw = os.environ.get("LAIA_LOCAL_SCRIPT_TIMEOUT", "90")
+    try:
+        return int(timeout_raw)
+    except ValueError:
+        return 90
+
+
+def clean_local_router_output(text: str) -> str:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text or "")
+    lines = []
+    for line in text.replace("\r", "\n").splitlines():
+        line = line.strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def run_local_script(script_name: str, script_args: list[str] | None = None):
     script_path = REPO_ROOT / "Scripts" / script_name
     if not script_path.exists():
         print(f"Error: missing local cognition script: {script_path}", file=sys.stderr)
         raise SystemExit(1)
-
-    timeout_raw = os.environ.get("LAIA_LOCAL_SCRIPT_TIMEOUT", "90")
-    try:
-        timeout_seconds = int(timeout_raw)
-    except ValueError:
-        timeout_seconds = 90
 
     process = subprocess.Popen(
         [str(script_path)] + (script_args or []),
@@ -1314,7 +1327,7 @@ def run_local_script(script_name: str, script_args: list[str] | None = None):
     )
 
     try:
-        returncode = process.wait(timeout=timeout_seconds)
+        returncode = process.wait(timeout=local_script_timeout_seconds())
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -1322,12 +1335,49 @@ def run_local_script(script_name: str, script_args: list[str] | None = None):
             pass
 
         print(
-            f"Error: local cognition script timed out after {timeout_seconds}s: {script_path.name}",
+            f"Error: local cognition script timed out after {local_script_timeout_seconds()}s: {script_path.name}",
             file=sys.stderr,
         )
         raise SystemExit(124)
 
     raise SystemExit(returncode)
+
+
+def start_local_router_for_day_ops(packet_description: str):
+    script_path = REPO_ROOT / "Scripts" / "laia_route_local.sh"
+    if not script_path.exists():
+        return None, f"missing local router script: {script_path}"
+
+    try:
+        process = subprocess.Popen(
+            [str(script_path), packet_description],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except Exception as e:
+        return None, f"local router failed to start: {e}"
+    return process, None
+
+
+def finish_local_router_for_day_ops(process, timeout_seconds: float, timeout_label: int):
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        return None, f"local router timed out after {timeout_label}s"
+
+    if process.returncode != 0:
+        detail = clean_local_router_output(stderr or stdout or "")
+        if detail:
+            return None, f"local router failed with exit {process.returncode}: {detail}"
+        return None, f"local router failed with exit {process.returncode}"
+
+    return clean_local_router_output(stdout or ""), None
 
 
 def local_help(args):
@@ -1836,7 +1886,7 @@ def day_command(args):
     focus_task(args)
 
 
-def day_ops(_args=None):
+def day_ops(args):
     git_state = "unknown"
     try:
         git_result = subprocess.run(
@@ -1868,18 +1918,6 @@ def day_ops(_args=None):
 
     ollama_path = shutil.which("ollama")
     qwen_status = "unknown"
-    if ollama_path:
-        try:
-            ollama_result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            qwen_status = "yes" if "qwen2.5:7b" in (ollama_result.stdout or "") else "no"
-        except Exception:
-            qwen_status = "unknown"
 
     packet_data, packet_path = read_packet_index_file()
     packets = packet_data.get("packets", []) if isinstance(packet_data, dict) else []
@@ -1893,12 +1931,11 @@ def day_ops(_args=None):
         if status in packet_counts:
             packet_counts[status] += 1
 
-    relevant_packets = [
+    active_review_packets = [
         packet for packet in packets
         if packet.get("status") in {"active", "review"}
     ]
-    if not relevant_packets:
-        relevant_packets = packets[-5:]
+    displayed_packets = active_review_packets[:5] if active_review_packets else packets[-5:]
 
     mode_data, mode_path = read_mode_state()
     mode_value = "unknown"
@@ -1923,12 +1960,48 @@ def day_ops(_args=None):
     if packet_data is None:
         print(f"- packet index: missing ({packet_path})")
     else:
-        for packet in relevant_packets[:5]:
+        for packet in displayed_packets:
             print(
                 f"- {packet.get('packet_id', '')} | {packet.get('title', '')} | "
                 f"{packet.get('status', '')} | {packet.get('packet_type', '')} | "
                 f"{packet.get('project', '')}"
             )
+    if getattr(args, "route", False):
+        route_targets = [
+            packet for packet in displayed_packets
+            if packet.get("status") in {"active", "review"}
+        ][:5]
+        print("")
+        print("Routing:")
+        if not route_targets:
+            print("- no active/review packets to route")
+        route_jobs = []
+        for packet in route_targets:
+            packet_description = (
+                f"{packet.get('packet_id', '')} | {packet.get('title', '')} | "
+                f"{packet.get('status', '')} | {packet.get('packet_type', '')} | "
+                f"{packet.get('project', '')}"
+            )
+            process, warning = start_local_router_for_day_ops(packet_description)
+            if warning:
+                print(f"- warning: {packet.get('packet_id', 'packet')}: {warning}")
+                continue
+            route_jobs.append((packet, process))
+        timeout_seconds = local_script_timeout_seconds()
+        route_deadline = time.monotonic() + timeout_seconds
+        for packet, process in route_jobs:
+            remaining_seconds = max(0.1, route_deadline - time.monotonic())
+            routed, warning = finish_local_router_for_day_ops(
+                process,
+                remaining_seconds,
+                timeout_seconds,
+            )
+            if warning:
+                print(f"- warning: {packet.get('packet_id', 'packet')}: {warning}")
+                continue
+            print(f"- {packet.get('packet_id', 'packet')}:")
+            for line in (routed or "No route returned.").splitlines():
+                print(f"  {line}")
     print("")
     print("Personal OS:")
     print(f"- mode: {mode_value}")
@@ -9946,6 +10019,7 @@ def main():
     day_sub = day_p.add_subparsers(dest="subcommand")
 
     day_ops_p = day_sub.add_parser("ops")
+    day_ops_p.add_argument("--route", action="store_true")
     day_ops_p.set_defaults(func=day_ops)
 
     # Personal OS commands (Phase 1)
