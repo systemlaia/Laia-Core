@@ -1966,11 +1966,14 @@ def day_ops(args):
                 f"{packet.get('status', '')} | {packet.get('packet_type', '')} | "
                 f"{packet.get('project', '')}"
             )
-    if getattr(args, "route", False):
+    route_limit_arg = getattr(args, "route_limit", None)
+    route_enabled = getattr(args, "route", False) or route_limit_arg is not None
+    if route_enabled:
+        route_limit = 1 if route_limit_arg is None else max(1, min(5, route_limit_arg))
         route_targets = [
             packet for packet in displayed_packets
             if packet.get("status") in {"active", "review"}
-        ][:5]
+        ][:route_limit]
         print("")
         print("Routing:")
         if not route_targets:
@@ -10020,6 +10023,7 @@ def main():
 
     day_ops_p = day_sub.add_parser("ops")
     day_ops_p.add_argument("--route", action="store_true")
+    day_ops_p.add_argument("--route-limit", type=int)
     day_ops_p.set_defaults(func=day_ops)
 
     # Personal OS commands (Phase 1)
