@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export LAIA_ROOT="$HOME/LAIA"
+export PYTHONPATH="$LAIA_ROOT/core"
+exec "$LAIA_ROOT/.venv/bin/python" "$LAIA_ROOT/core/cli/laia.py" "$@"

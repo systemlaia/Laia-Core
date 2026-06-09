@@ -1,0 +1,12 @@
+primary_reasoner: llama3
+fast_parser: mistral
+micro_helper: phi4-mini
+vision_model: llava
+experimental_alt: qwen2.5
+
+policy:
+  planning: primary_reasoner
+  parsing: fast_parser
+  cleanup: fast_parser
+  helper: micro_helper
+  vision: vision_model

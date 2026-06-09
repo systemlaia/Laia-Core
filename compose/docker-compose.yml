@@ -1,0 +1,106 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - "4000:3000"
+    volumes:
+      - /Users/iv/LAIA/dashboard:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - /Users/iv/LAIA:/srv
+      - /Users/iv/LAIA/filebrowser.db:/database/filebrowser.db
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "8443:9443"
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/iv/LAIA/portainer:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - /Users/iv/LAIA/ollama:/root/.ollama
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    ports:
+      - "3000:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_AUTH=false
+    volumes:
+      - /Users/iv/LAIA/open-webui:/app/backend/data
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - /Users/iv/LAIA/mosquitto/config:/mosquitto/config
+      - /Users/iv/LAIA/mosquitto/data:/mosquitto/data
+      - /Users/iv/LAIA/mosquitto/log:/mosquitto/log
+
+  nodered:
+    image: nodered/node-red:latest
+    container_name: nodered
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "1880:1880"
+    volumes:
+      - /Users/iv/LAIA/nodered:/data
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=America/Los_Angeles
+    volumes:
+      - /Users/iv/LAIA/homeassistant:/config
+
+  grocy:
+    image: lscr.io/linuxserver/grocy:latest
+    container_name: grocy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9283:80"
+    environment:
+      - PUID=501
+      - PGID=20
+      - TZ=America/Los_Angeles
+    volumes:
+      - /Users/iv/LAIA/grocy/data:/config
+    # Grocy is for LAIA operational state, not archival truth.
+    # Change the default Grocy admin password immediately after first login.
+
+networks:
+  default:
+    name: laia-core

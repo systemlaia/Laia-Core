@@ -1,0 +1,10 @@
+id: receipt
+label: Receipt Duplex Gray 600
+source: ADF Duplex
+mode: Gray
+dpi: 600
+format: tiff
+ocr: true
+deskew: true
+rotate_pages: true
+clean: true

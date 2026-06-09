@@ -1,0 +1,10 @@
+id: archive-color
+label: Archive Color Duplex 400
+source: ADF Duplex
+mode: Color
+dpi: 400
+format: tiff
+ocr: true
+deskew: false
+rotate_pages: true
+clean: false

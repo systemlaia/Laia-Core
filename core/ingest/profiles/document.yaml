@@ -1,0 +1,12 @@
+id: document
+label: Document Duplex Gray 300
+source: ADF Duplex
+mode: Gray
+dpi: 300
+format: tiff
+ocr: true
+deskew: true
+swdeskew: yes
+swdespeck: 2
+rotate_pages: true
+clean: true

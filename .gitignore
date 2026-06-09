@@ -1,0 +1,79 @@
+# LAIA runtime packet/data directories
+Inbox/
+Archive/
+Catalog/
+Exports/
+
+# Grocy runtime data and local secrets
+grocy/data/
+grocy/.env
+
+# Local environment files / secrets
+.env
+*.env
+!.env.example
+!*.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.venv-flipper/
+
+# Build/test outputs
+*.log
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Runtime/service state
+filebrowser.db
+logs/
+index/
+indexes/
+mounts/
+packets/
+snapshots/
+
+# Service app data
+homeassistant/
+mosquitto/
+nodered/
+ollama/
+open-webui/
+portainer/
+
+# Build/staging/sandboxes
+build_sandboxes/
+flipper_staging/
+pebble_staging/
+momentum_rebuild/
+manual_install/
+flipper_sd_backup/
+flipper_sd_map/
+releases/
+git-bundles/
+
+# Local vaults / local knowledge stores
+vault/
+vaults/
+.obsidian/
+
+# Nested/local experiments
+LAIA/
+git/
+
+# Local backup files
+*.bak
+
+# Compiled binaries
+c_core/test_stardate_core
+
+# Local backup files
+*.bak
+
+# Compiled binaries
+c_core/test_stardate_core
