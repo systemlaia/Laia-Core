@@ -115,6 +115,8 @@ def build_final(packet_json: Path) -> dict[str, Any]:
         "created_at": packet.get("created_at"),
         "finalized_at": finalized_at,
         "approved_category": approval.get("approved_category"),
+        "document_type": approval.get("document_type"),
+        "classification_corrected": bool(approval.get("classification_corrected")),
         "confidence": float(confidence or 0.0),
         "page_count": packet.get("page_count", summary.get("page_count", 0)),
         "word_count": text_stats.get("word_count", summary.get("word_count", 0)),
@@ -137,6 +139,8 @@ def catalog_record(final: dict[str, Any]) -> dict[str, Any]:
         "created_at": final.get("created_at"),
         "finalized_at": final.get("finalized_at"),
         "approved_category": final.get("approved_category"),
+        "document_type": final.get("document_type"),
+        "classification_corrected": bool(final.get("classification_corrected")),
         "confidence": final.get("confidence"),
         "page_count": final.get("page_count"),
         "word_count": final.get("word_count"),
@@ -153,6 +157,8 @@ def markdown_final(final: dict[str, Any]) -> str:
         f"- Packet: {final.get('source_packet_dir')}\n"
         f"- Project: {final.get('project')}\n"
         f"- Final Category: {final.get('approved_category')}\n"
+        f"- Document Type: {final.get('document_type') or ''}\n"
+        f"- Classification Corrected: {final.get('classification_corrected')}\n"
         f"- Confidence: {final.get('confidence', 0.0):.2f}\n"
         f"- Pages: {final.get('page_count')}\n"
         f"- Words: {final.get('word_count')}\n"

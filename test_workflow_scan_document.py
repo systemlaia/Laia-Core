@@ -310,6 +310,8 @@ class WorkflowScanDocumentTests(unittest.TestCase):
             ["librarian", "inspect-extract", "--packet", "X"],
             ["librarian", "inspect-extract", "--packet", "X", "--lines", "20"],
             ["librarian", "inspect-extract", "--packet", "X", "--json"],
+            ["librarian", "correct-classification", "--packet", "X", "--category", "mail"],
+            ["librarian", "correct-classification", "--packet", "X", "--category", "mail", "--document-type", "survey_invitation", "--note", "manual correction"],
             ["librarian", "catalog", "--last"],
             ["librarian", "catalog", "--project", "Receipts", "--limit", "10"],
             ["librarian", "catalog", "--category", "receipt", "--json"],

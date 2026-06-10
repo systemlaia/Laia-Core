@@ -10,7 +10,7 @@ FLIPPER_APP_DIR=flipper_staging/laia_stardate
 
 py-test:
 	$(PYTHON) -m py_compile stardate.py
-	$(PYTHON) -m unittest test_stardate.py test_cli_ingest.py test_librarian_index.py test_librarian_route.py test_librarian_summarize.py test_librarian_classify.py test_librarian_review.py test_librarian_approve.py test_librarian_finalize.py test_librarian_catalog.py test_librarian_dedupe.py test_librarian_failures.py test_librarian_pending.py test_librarian_extract.py test_librarian_export.py test_librarian_extract_report.py test_librarian_correct_extract.py test_librarian_inspect_extract.py test_grocy.py test_workflow_scan_document.py
+	$(PYTHON) -m unittest test_stardate.py test_cli_ingest.py test_librarian_index.py test_librarian_route.py test_librarian_summarize.py test_librarian_classify.py test_librarian_review.py test_librarian_approve.py test_librarian_finalize.py test_librarian_catalog.py test_librarian_dedupe.py test_librarian_failures.py test_librarian_pending.py test_librarian_extract.py test_librarian_export.py test_librarian_extract_report.py test_librarian_correct_extract.py test_librarian_inspect_extract.py test_librarian_correct_classification.py test_grocy.py test_workflow_scan_document.py
 
 c-test:
 	$(CC) $(CFLAGS) c_core/stardate_core.c c_core/test_stardate_core.c -o $(C_TEST_BIN) $(LDFLAGS)

@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
+    from librarian.correct_classification import read_classification_correction
     from librarian.index import DEFAULT_INGEST_ROOT, load_packet
     from librarian.summarize import load_json, optional_json
 except ModuleNotFoundError:
+    from core.librarian.correct_classification import read_classification_correction
     from core.librarian.index import DEFAULT_INGEST_ROOT, load_packet
     from core.librarian.summarize import load_json, optional_json
 
@@ -58,7 +60,15 @@ def build_approval(packet_json: Path) -> tuple[dict[str, Any], bool]:
 
     recommended = str(review.get("recommended_action") or "")
     warning_needed = recommended != "approve_classification"
-    approved_category = classification.get("primary_category") or review.get("primary_category")
+    correction = read_classification_correction(packet_dir)
+    corrected = correction.get("corrected") or {}
+    approved_category = (
+        corrected.get("primary_category")
+        or classification.get("primary_category")
+        or review.get("primary_category")
+    )
+    document_type = corrected.get("document_type")
+    classification_corrected = bool(corrected)
     confidence = classification.get("confidence", review.get("confidence", 0.0))
 
     approval = {
@@ -68,6 +78,8 @@ def build_approval(packet_json: Path) -> tuple[dict[str, Any], bool]:
         "approved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "review_status": "approved",
         "approved_category": approved_category,
+        "document_type": document_type,
+        "classification_corrected": classification_corrected,
         "confidence": float(confidence or 0.0),
         "source_review_status": source_review_status,
         "recommended_action": recommended,
@@ -83,6 +95,8 @@ def markdown_approval(approval: dict[str, Any]) -> str:
         f"- Packet: {approval['source_packet_dir']}\n"
         f"- Project: {approval.get('project')}\n"
         f"- Approved Category: {approval.get('approved_category')}\n"
+        f"- Document Type: {approval.get('document_type') or ''}\n"
+        f"- Classification Corrected: {approval.get('classification_corrected')}\n"
         f"- Confidence: {approval.get('confidence', 0.0):.2f}\n"
         f"- Original Recommended Action: {approval.get('recommended_action')}\n"
         f"- Approved At: {approval.get('approved_at')}\n"
@@ -112,6 +126,8 @@ def print_summary(approval: dict[str, Any], approval_json: Path, approval_md: Pa
     print(f"Type: {approval['packet_type']}")
     print(f"Project: {approval.get('project')}")
     print(f"Approved Category: {approval.get('approved_category')}")
+    if approval.get("document_type"):
+        print(f"Document Type: {approval.get('document_type')}")
     print(f"Confidence: {approval.get('confidence', 0.0):.2f}")
     print(f"Review Status: {approval.get('review_status')}")
     print("\nWrote:")

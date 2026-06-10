@@ -35,6 +35,7 @@ from librarian.export import command_export
 from librarian.extract_report import command_extract_report
 from librarian.correct_extract import command_correct_extract
 from librarian.inspect_extract import command_inspect_extract
+from librarian.correct_classification import command_correct_classification
 from grocy_service import command_grocy_checkins_draft, command_grocy_status
 from workflow.scan_document import command_scan_document
 
@@ -1104,6 +1105,13 @@ def build_parser():
     librarian_inspect_extract_p.add_argument("--json", action="store_true")
     librarian_inspect_extract_p.set_defaults(func=command_inspect_extract)
 
+    librarian_correct_classification_p = librarian_sub.add_parser("correct-classification", help="Write human classification corrections")
+    librarian_correct_classification_p.add_argument("--packet", required=True)
+    librarian_correct_classification_p.add_argument("--category", required=True)
+    librarian_correct_classification_p.add_argument("--document-type", dest="document_type", default="")
+    librarian_correct_classification_p.add_argument("--note", action="append", default=[])
+    librarian_correct_classification_p.set_defaults(func=command_correct_classification)
+
     librarian_mark_failures_p = librarian_sub.add_parser("mark-failures", help="Mark failed scan folders")
     librarian_mark_failures_p.set_defaults(func=command_mark_failures)
 
@@ -1234,6 +1242,8 @@ def main():
         command_correct_extract(args)
     elif args.command == "librarian" and args.subcommand == "inspect-extract":
         command_inspect_extract(args)
+    elif args.command == "librarian" and args.subcommand == "correct-classification":
+        command_correct_classification(args)
     elif args.command == "librarian" and args.subcommand == "mark-failures":
         command_mark_failures(args)
     elif args.command == "librarian" and args.subcommand == "pending":
