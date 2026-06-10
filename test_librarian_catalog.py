@@ -17,8 +17,10 @@ class LibrarianCatalogTests(unittest.TestCase):
         source_packet_dir: str = "/tmp/packet",
         project: str = "Inbox",
         category: str = "receipt",
+        document_type=None,
+        classification_corrected=None,
     ):
-        return {
+        record = {
             "packet_id": packet_id,
             "packet_type": "laia.ingest.scan",
             "project": project,
@@ -31,6 +33,11 @@ class LibrarianCatalogTests(unittest.TestCase):
             "source_packet_dir": source_packet_dir,
             "destination_packet_dir": "/tmp/archive",
         }
+        if document_type is not None:
+            record["document_type"] = document_type
+        if classification_corrected is not None:
+            record["classification_corrected"] = classification_corrected
+        return record
 
     def test_catalog_last_reads_final_valid_jsonl_record(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,6 +176,81 @@ class LibrarianCatalogTests(unittest.TestCase):
 
             self.assertIn("LAIA Librarian Catalog Entry", output.getvalue())
             self.assertIn("Packet ID: last", output.getvalue())
+
+    def test_catalog_last_displays_document_type_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "ingest_catalog.jsonl"
+            catalog.write_text(
+                json.dumps(self.record("last", document_type="survey_invitation")) + "\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+
+            with patch("core.librarian.catalog.catalog_path", return_value=catalog):
+                with contextlib.redirect_stdout(output):
+                    command_catalog(argparse.Namespace(last=True, project="", category="", limit=20, json=False))
+
+            self.assertIn("Document Type: survey_invitation", output.getvalue())
+
+    def test_catalog_last_displays_classification_corrected_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "ingest_catalog.jsonl"
+            catalog.write_text(
+                json.dumps(self.record("last", classification_corrected=True)) + "\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+
+            with patch("core.librarian.catalog.catalog_path", return_value=catalog):
+                with contextlib.redirect_stdout(output):
+                    command_catalog(argparse.Namespace(last=True, project="", category="", limit=20, json=False))
+
+            self.assertIn("Classification Corrected: true", output.getvalue())
+
+    def test_catalog_query_displays_document_type_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "ingest_catalog.jsonl"
+            catalog.write_text(
+                json.dumps(self.record("one", document_type="survey_invitation")) + "\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+
+            with patch("core.librarian.catalog.catalog_path", return_value=catalog):
+                with contextlib.redirect_stdout(output):
+                    command_catalog(argparse.Namespace(last=False, project="", category="", limit=20, json=False))
+
+            self.assertIn("Document Type: survey_invitation", output.getvalue())
+
+    def test_catalog_query_displays_classification_corrected_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "ingest_catalog.jsonl"
+            catalog.write_text(
+                json.dumps(self.record("one", classification_corrected=False)) + "\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+
+            with patch("core.librarian.catalog.catalog_path", return_value=catalog):
+                with contextlib.redirect_stdout(output):
+                    command_catalog(argparse.Namespace(last=False, project="", category="", limit=20, json=False))
+
+            self.assertIn("Classification Corrected: false", output.getvalue())
+
+    def test_catalog_older_records_without_correction_fields_display_normally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "ingest_catalog.jsonl"
+            catalog.write_text(json.dumps(self.record("old")) + "\n", encoding="utf-8")
+            output = io.StringIO()
+
+            with patch("core.librarian.catalog.catalog_path", return_value=catalog):
+                with contextlib.redirect_stdout(output):
+                    command_catalog(argparse.Namespace(last=True, project="", category="", limit=20, json=False))
+
+            text = output.getvalue()
+            self.assertIn("Packet ID: old", text)
+            self.assertNotIn("Document Type:", text)
+            self.assertNotIn("Classification Corrected:", text)
 
 
 if __name__ == "__main__":

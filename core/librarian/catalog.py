@@ -66,6 +66,10 @@ def print_catalog_entry(record: dict[str, Any]) -> None:
     print(f"Type: {record.get('packet_type')}")
     print(f"Project: {record.get('project')}")
     print(f"Category: {record.get('approved_category')}")
+    if "document_type" in record:
+        print(f"Document Type: {record.get('document_type')}")
+    if "classification_corrected" in record:
+        print(f"Classification Corrected: {str(bool(record.get('classification_corrected'))).lower()}")
     print(f"Confidence: {float(record.get('confidence') or 0.0):.2f}")
     print(f"Pages: {record.get('page_count')}")
     print(f"Words: {record.get('word_count')}")
@@ -84,6 +88,10 @@ def print_catalog_query(records: list[dict[str, Any]]) -> None:
         print(f"{index}. {record.get('packet_id')}")
         print(f"   Project: {record.get('project')}")
         print(f"   Category: {record.get('approved_category') or record.get('category')}")
+        if "document_type" in record:
+            print(f"   Document Type: {record.get('document_type')}")
+        if "classification_corrected" in record:
+            print(f"   Classification Corrected: {str(bool(record.get('classification_corrected'))).lower()}")
         print(f"   Confidence: {float(record.get('confidence') or 0.0):.2f}")
         print(f"   Pages: {record.get('page_count')}")
         print(f"   Words: {record.get('word_count')}")
