@@ -23,19 +23,19 @@ def catalog_records_if_available() -> list[dict[str, Any]]:
 
 
 def find_packet_by_id(packet_id: str, ingest_root: Path = DEFAULT_INGEST_ROOT) -> Path:
-    for record in catalog_records_if_available():
-        if record.get("packet_id") != packet_id:
-            continue
-        packet_json = Path(str(record.get("source_packet_dir") or "")).expanduser() / "packet.json"
-        if packet_json.exists():
-            return packet_json
-
     for packet_json in ingest_root.rglob("packet.json"):
         try:
             packet = load_packet(packet_json)
         except Exception:
             continue
         if packet.get("packet_id") == packet_id or packet_id_for(packet_json, packet) == packet_id:
+            return packet_json
+
+    for record in catalog_records_if_available():
+        if record.get("packet_id") != packet_id:
+            continue
+        packet_json = Path(str(record.get("source_packet_dir") or "")).expanduser() / "packet.json"
+        if packet_json.exists():
             return packet_json
 
     raise SystemExit("Packet ID not found.")
