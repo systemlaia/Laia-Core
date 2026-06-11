@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$CMD" in
+  ingest-sd)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_ingest_sd.sh" "$@"
+    ;;
+  verify)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_verify_packet.sh" "$@"
+    ;;
+  verify-last)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_verify_last.sh"
+    ;;
+  open-last)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_open_last.sh"
+    ;;
+  index)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_rebuild_index.sh"
+    ;;
+  catalog)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_build_catalog.py"
+    ;;
+  stats)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_catalog_query.py" stats
+    ;;
+  cameras)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_catalog_query.py" cameras
+    ;;
+  list-packets)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_catalog_query.py" list-packets
+    ;;
+  recent)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_catalog_query.py" recent "$@"
+    ;;
+  duplicates)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_catalog_query.py" duplicates
+    ;;
+  review-last)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_review_packet.py" status --last
+    ;;
+  mark-reviewed)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_review_packet.py" set-status reviewed --last
+    ;;
+  mark-new)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_review_packet.py" set-status new --last
+    ;;
+  notes-last)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_review_packet.py" set-notes "$*" --last
+    ;;
+  add-select)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_selects.py" add "$@"
+    ;;
+  remove-select)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_selects.py" remove "$@"
+    ;;
+  list-selects)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_selects.py" list
+    ;;
+  clear-selects)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_selects.py" clear
+    ;;
+  export-selects)
+    "$HOME/LAIA/photo_ingest/bin/laia_photo_selects.py" export "$@"
+    ;;
+  help|-h|--help|"")
+    echo "LAIA Photo Ingest"
+    echo
+    echo "Usage:"
+    echo "  laia-photo ingest-sd /Volumes/CARD/DCIM"
+    echo "  laia-photo verify /path/to/packet"
+    echo "  laia-photo verify-last"
+    echo "  laia-photo open-last"
+    echo "  laia-photo index
+  laia-photo catalog
+  laia-photo stats
+  laia-photo cameras
+  laia-photo list-packets
+  laia-photo recent [limit]
+  laia-photo duplicates
+  laia-photo review-last
+  laia-photo mark-reviewed
+  laia-photo mark-new
+  laia-photo notes-last "your note here"
+  laia-photo add-select FILENAME
+  laia-photo remove-select FILENAME
+  laia-photo list-selects
+  laia-photo clear-selects
+  laia-photo export-selects /destination/folder"
+    ;;
+  *)
+    echo "Unknown command: $CMD"
+    echo
+    echo "Run:"
+    echo "  laia-photo help"
+    exit 1
+    ;;
+esac

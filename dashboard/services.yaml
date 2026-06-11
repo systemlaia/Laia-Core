@@ -1,0 +1,18 @@
+- LAIA Core:
+    - Open WebUI:
+        href: http://192.168.1.211:3000
+        description: AI chat interface
+
+    - ComfyUI:
+        href: http://192.168.1.211:8188
+        description: Image workflow engine
+
+    - Ollama API:
+        href: http://192.168.1.211:11434
+        description: Local AI model server
+
+- Ollama Models:
+- Node System:
+    - Dashboard:
+        href: http://192.168.1.211:4000
+        description: LAIA Node Console

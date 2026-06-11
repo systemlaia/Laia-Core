@@ -1,0 +1,46 @@
+{
+  "packet_type": "laia_blue_book_context_packet",
+  "packet_id": "20260514-171737-laia-core",
+  "topic": "LAIA Core",
+  "generated_at": "2026-05-14T17:17:37.066042",
+  "vault": "/Users/iv/LAIA/vaults/Blue Book",
+  "index_path": "/Users/iv/LAIA/indexes/blue-book-index.json",
+  "model_summary_generated": false,
+  "model": null,
+  "limit": 8,
+  "min_score": 30,
+  "source_count": 3,
+  "sources": [
+    {
+      "index": 1,
+      "score": 42,
+      "title": "LAIA Core Snapshot — OpenClaw Stable Baseline",
+      "path": "LAIA Core Snapshot — OpenClaw Stable Baseline.md",
+      "absolute_path": "/Users/iv/LAIA/vaults/Blue Book/LAIA Core Snapshot — OpenClaw Stable Baseline.md",
+      "type": "note",
+      "tags": [],
+      "excerpt": "# LAIA Core Snapshot — OpenClaw Stable Baseline Date: 2026-05-08 ## Runtime Status Gateway: healthy CLI: healthy Primary model: ollama/llama3:latest Reasoning: off OpenClaw Version: 2026.4.27 ## Stable Architecture Mac mini → Docker → OpenClaw → Ollama → SSH tunnel → Browser UI ## Stable Ports Gateway: 18789 Tunnel: 18889 Ollama: 11434 ## Workspace Files - AGENTS.md - MEMORY.md - USER.md - IDENTITY.md - TOOLS.md - HEARTBEAT.md - SOUL.md - BOOTSTRAP.md ## Active Agents - Operator - Archivist -..."
+    },
+    {
+      "index": 2,
+      "score": 42,
+      "title": "LAIA Core Stable Baseline",
+      "path": "LAIA Core Stable Baseline.md",
+      "absolute_path": "/Users/iv/LAIA/vaults/Blue Book/LAIA Core Stable Baseline.md",
+      "type": "note",
+      "tags": [],
+      "excerpt": "# LAIA Core Stable Baseline ## Core Stack - Mac mini (primary node) - OpenClaw via Docker - Ollama local inference - llama3:latest primary model - SSH tunnel remote access ## Stable Ports - OpenClaw UI: 18789 - Tunnel UI: 18889 - Ollama: 11434 ## Rules - No new integrations until stable - Restart before debugging - One model change at a time - Memory and agents before automation ## Recovery Commands docker compose restart openclaw-gateway curl -I http://127.0.0.1:18789/healthz ollama list..."
+    },
+    {
+      "index": 3,
+      "score": 36,
+      "title": "🧠 LAIA CORE DASHBOARD",
+      "path": "00_DASHBOARD/LAIA_HOME.md",
+      "absolute_path": "/Users/iv/LAIA/vaults/Blue Book/00_DASHBOARD/LAIA_HOME.md",
+      "type": "note",
+      "tags": [],
+      "excerpt": "# 🧠 LAIA CORE DASHBOARD ## 🏛️ Systems - [[CRS - California Revival System]] --- ## 📅 Today ## 🎯 Focus Today - --- ## 🟢 Active Work (Today) ## 🎯 Focus Mode (Projects Today) ## 🔥 Active Projects --- ## ⚙️ Systems --- ## 🧠 Recent Insights --- ## 📓 Recent Logs --- ## 🔩 Components --- ## ⚡ Quick Actions - Cmd + Shift + P → New Project - Cmd + Shift + S → New System - Cmd + Shift + C → New Component - Cmd + Shift + I → New Insight --- ## 🧭 Notes - Capture fast → process later - Promote ideas into the..."
+    }
+  ],
+  "summary": null
+}
