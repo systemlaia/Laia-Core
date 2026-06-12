@@ -38,6 +38,9 @@ from librarian.inspect_extract import command_inspect_extract
 from librarian.correct_classification import command_correct_classification
 from grocy_service import command_grocy_checkins_draft, command_grocy_status
 from workflow.scan_document import command_scan_document
+from photo_ingest.commands import register_photo_subcommands
+from paper_ingest.standardize import register_paper_subcommands
+from packets.registry import register_packets_subcommands
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -998,6 +1001,10 @@ def build_parser():
     sync_sub.add_parser("push")
     sync_sub.add_parser("pull")
 
+    register_packets_subcommands(sub)
+    register_paper_subcommands(sub)
+    register_photo_subcommands(sub)
+
     workflow_p = sub.add_parser("workflow", help="Workflow orchestration commands")
     workflow_sub = workflow_p.add_subparsers(dest="subcommand")
 
@@ -1212,6 +1219,12 @@ def main():
         sync_push(args)
     elif args.command == "sync" and args.subcommand == "pull":
         sync_pull(args)
+    elif args.command == "photo" and hasattr(args, "func"):
+        args.func(args)
+    elif args.command == "packets" and hasattr(args, "func"):
+        args.func(args)
+    elif args.command == "paper" and hasattr(args, "func"):
+        args.func(args)
     elif args.command == "workflow" and args.subcommand == "scan-document":
         command_scan_document(args)
     elif args.command == "ingest" and args.subcommand == "scan":
