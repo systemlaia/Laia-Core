@@ -19,8 +19,13 @@ from core.packets.registry import (
     command_packets_execute_route,
     command_packets_execute_routes,
     command_packets_open,
+    command_packets_output,
+    command_packets_output_files,
+    command_packets_output_history,
+    command_packets_outputs,
     command_packets_queue,
     command_packets_ready,
+    command_packets_review_output,
     command_packets_route,
     command_packets_route_history,
     command_packets_route_status,
@@ -108,6 +113,22 @@ class PacketRegistryTests(unittest.TestCase):
             "LAIA_PACKET_REGISTRY_DB": str(db_path),
             "LAIA_PACKET_ROOTS": str(Path(db_path).parent / "unused"),
         }
+
+    def execute_temp_export(self, root, job_id="output-photo", *, review_status="reviewed"):
+        packet = self.make_photo_packet(root / "photo", job_id=job_id)
+        write_review_sidecar(packet, {"review_status": review_status})
+        (packet / "review" / "selects.txt").write_text("one.jpg\n", encoding="utf-8")
+        db_path = root / "registry.db"
+        export_root = root / "exports"
+        scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+        env = self.registry_env(db_path)
+        env["LAIA_PACKET_EXPORT_ROOT"] = str(export_root)
+        with patch.dict(os.environ, env, clear=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_packets_route(argparse.Namespace(identifier=job_id, destination_type="export", destination="", note="export"))
+                command_packets_execute_route(argparse.Namespace(identifier=job_id, dry_run=False))
+        scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+        return packet, db_path, export_root / job_id
 
     def test_registry_record_reads_photo_manifest_review_and_selects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1333,7 +1354,8 @@ class PacketRegistryTests(unittest.TestCase):
             text = registry_briefing(load_registry_rows(db_path))
 
             self.assertIn("1 packet routes have been executed.", text)
-            self.assertIn("Review route outputs or continue ingest.", text)
+            self.assertIn("Review executed route outputs.", text)
+            self.assertNotIn("Review route outputs or continue ingest.", text)
             self.assertNotIn("Execute downstream routes or continue ingest.", text)
 
     def test_briefing_with_queued_and_executed_routes_mentions_both(self):
@@ -1400,6 +1422,189 @@ class PacketRegistryTests(unittest.TestCase):
 
             self.assertIn("1 packet routes have been executed.", text)
             self.assertNotIn("Executed Outputs:", text)
+            self.assertNotIn("Review route outputs or continue ingest.", text)
+            self.assertNotIn("Review executed route outputs.", text)
+
+    def test_output_command_shows_executed_output_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, db_path, output_path = self.execute_temp_export(root, job_id="output-details")
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_output(argparse.Namespace(identifier="output-details"))
+
+            text = output.getvalue()
+            self.assertIn("Route Status:         executed", text)
+            self.assertIn("Execution Result:     exported", text)
+            self.assertIn(f"Execution Output:     {output_path}", text)
+            self.assertIn("Output File Count:    3", text)
+
+    def test_output_command_handles_missing_output_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="missing-output")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_output(argparse.Namespace(identifier="missing-output"))
+
+            self.assertIn("No executed output found.", output.getvalue())
+
+    def test_outputs_command_lists_executed_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="outputs-list")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_outputs(argparse.Namespace(status=None, destination_type=None))
+
+            text = output.getvalue()
+            self.assertIn("outputs-list", text)
+            self.assertIn("exported", text)
+            self.assertIn("new", text)
+
+    def test_output_files_lists_export_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="output-files")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_output_files(argparse.Namespace(identifier="output-files"))
+
+            text = output.getvalue()
+            self.assertIn("one.jpg", text)
+            self.assertIn("export_manifest.json", text)
+            self.assertIn("packet_handoff.md", text)
+
+    def test_review_output_writes_fields_and_appends_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.execute_temp_export(root, job_id="review-output")
+            before = len(read_routing(packet)["history"])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="review-output", status="reviewed", note="looks good"))
+
+            route = read_routing(packet)
+            self.assertEqual(route["output_review_status"], "reviewed")
+            self.assertEqual(route["output_review_note"], "looks good")
+            self.assertTrue(route["output_reviewed_at"])
+            self.assertEqual(len(route["history"]), before + 1)
+            self.assertEqual(route["history"][-1]["route_status"], "output_reviewed")
+
+    def test_review_output_default_status_is_reviewed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.execute_temp_export(root, job_id="review-default")
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="review-default", status=None, note=""))
+
+            self.assertEqual(read_routing(packet)["output_review_status"], "reviewed")
+
+    def test_review_output_supports_needs_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.execute_temp_export(root, job_id="review-needs-work")
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="review-needs-work", status="needs_work", note="missing context"))
+
+            self.assertEqual(read_routing(packet)["output_review_status"], "needs_work")
+
+    def test_output_history_prints_review_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="output-history")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="output-history", status="needs_work", note="check export"))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_output_history(argparse.Namespace(identifier="output-history"))
+
+            text = output.getvalue()
+            self.assertIn("output_reviewed", text)
+            self.assertIn("output_review_status=needs_work", text)
+            self.assertIn("note: check export", text)
+
+    def test_registry_scan_captures_output_review_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, db_path, _ = self.execute_temp_export(root, job_id="scan-output-review")
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="scan-output-review", status="reviewed", note="done"))
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            row = load_registry_rows(db_path)[0]
+            self.assertEqual(row["output_review_status"], "reviewed")
+            self.assertEqual(row["output_review_note"], "done")
+            self.assertTrue(row["output_reviewed_at"])
+
+    def test_briefing_shows_output_review_counts_and_unreviewed_suggestion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="briefing-output-new")
+            db_path = root / "registry.db"
+
+            text = registry_briefing(load_registry_rows(db_path))
+
+            self.assertIn("Output Review:\n  new: 1", text)
+            self.assertIn("Review executed route outputs.", text)
+
+    def test_briefing_changes_when_all_outputs_reviewed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="briefing-output-reviewed")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="briefing-output-reviewed", status="reviewed", note="done"))
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            text = registry_briefing(load_registry_rows(db_path))
+
+            self.assertIn("Output Review:\n  reviewed: 1", text)
+            self.assertIn("Executed outputs have been reviewed; continue ingest or promote outputs.", text)
+            self.assertNotIn("Review executed route outputs.", text)
+            self.assertNotIn("Review route outputs or continue ingest.", text)
+            self.assertIn("Archive is healthy.", text)
+
+    def test_briefing_suggests_resolving_outputs_marked_needs_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="briefing-output-needs-work")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="briefing-output-needs-work", status="needs_work", note="fix"))
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            text = registry_briefing(load_registry_rows(db_path))
+
+            self.assertIn("Output Review:\n  needs_work: 1", text)
+            self.assertIn("Resolve outputs marked needs_work.", text)
 
     def test_missing_selected_file_produces_partial_export_result(self):
         with tempfile.TemporaryDirectory() as tmp:
