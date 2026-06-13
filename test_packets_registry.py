@@ -18,6 +18,7 @@ from core.packets.registry import (
     command_packets_clear_route,
     command_packets_execute_route,
     command_packets_execute_routes,
+    command_packets_lifecycle,
     command_packets_open,
     command_packets_output,
     command_packets_output_files,
@@ -1938,6 +1939,171 @@ class PacketRegistryTests(unittest.TestCase):
             self.assertIn("1 packet outputs have been promoted.", text)
             self.assertIn("Promoted outputs are ready for downstream use.", text)
             self.assertNotIn("Promote reviewed outputs or continue ingest.", text)
+
+    def test_lifecycle_for_promoted_packet_includes_complete_sections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="lifecycle-promoted")
+            db_path = root / "registry.db"
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="lifecycle-promoted", destination_type="publication", destination="Photo selects", note="publish", dry_run=False)
+                    )
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-promoted"))
+
+            text = output.getvalue()
+            self.assertIn("LAIA Packet Lifecycle", text)
+            self.assertIn("Packet:", text)
+            self.assertIn("Verification:", text)
+            self.assertIn("Review / Workflow:", text)
+            self.assertIn("Route:", text)
+            self.assertIn("Execution:", text)
+            self.assertIn("Output Review:", text)
+            self.assertIn("Promotion:", text)
+            self.assertIn("promotion_destination_type: publication", text)
+            self.assertIn("promotion_note: publish", text)
+            self.assertIn("Current state: promoted and ready for downstream use.", text)
+
+    def test_lifecycle_output_reviewed_packet_reports_ready_for_promotion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="lifecycle-reviewed")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-reviewed"))
+
+            self.assertIn("Current state: output reviewed and ready for promotion.", output.getvalue())
+
+    def test_lifecycle_executed_unreviewed_packet_reports_awaiting_output_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="lifecycle-executed")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-executed"))
+
+            self.assertIn("Current state: route executed; output awaiting review.", output.getvalue())
+
+    def test_lifecycle_queued_route_reports_awaiting_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="lifecycle-queued")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_route(argparse.Namespace(identifier="lifecycle-queued", destination_type="archive", destination="", note="queue"))
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-queued"))
+
+            text = output.getvalue()
+            self.assertIn("route_status: queued", text)
+            self.assertIn("route_note: queue", text)
+            self.assertIn("Current state: route queued; awaiting execution.", text)
+
+    def test_lifecycle_ready_unrouted_packet_reports_ready_for_routing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="lifecycle-ready")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-ready"))
+
+            text = output.getvalue()
+            self.assertIn("Route:\n  none", text)
+            self.assertIn("Current state: ready for routing.", text)
+
+    def test_lifecycle_attention_packet_reports_needs_attention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_photo_packet(root / "photo", job_id="lifecycle-bad", missing_report=True)
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-bad"))
+
+            text = output.getvalue()
+            self.assertIn("missing_required: ingest_report.md", text)
+            self.assertIn("Current state: needs attention.", text)
+
+    def test_lifecycle_timeline_orders_known_timestamps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="lifecycle-timeline")
+            db_path = root / "registry.db"
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="lifecycle-timeline", destination_type="archive", destination="", note="", dry_run=False)
+                    )
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier="lifecycle-timeline"))
+
+            text = output.getvalue()
+            timeline = text.split("Timeline:", 1)[1]
+            self.assertLess(timeline.index("packet created"), timeline.index("route queued"))
+            self.assertLess(timeline.index("route queued"), timeline.index("route executed"))
+            self.assertLess(timeline.index("route executed"), timeline.index("output reviewed"))
+            self.assertLess(timeline.index("output reviewed"), timeline.index("promoted"))
+
+    def test_lifecycle_direct_packet_path_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="lifecycle-direct")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            connect_registry(db_path).close()
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle(argparse.Namespace(identifier=str(packet)))
+
+            self.assertIn("job_id: lifecycle-direct", output.getvalue())
+
+    def test_lifecycle_unknown_packet_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "registry.db"
+            connect_registry(db_path).close()
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with self.assertRaisesRegex(SystemExit, "Packet not found"):
+                    command_packets_lifecycle(argparse.Namespace(identifier="missing-packet"))
 
     def test_missing_selected_file_produces_partial_export_result(self):
         with tempfile.TemporaryDirectory() as tmp:

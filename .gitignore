@@ -77,3 +77,7 @@ c_core/test_stardate_core
 
 # Compiled binaries
 c_core/test_stardate_core
+
+# Python cache files
+__pycache__/
+*.py[cod]
