@@ -1527,6 +1527,108 @@ def command_packets_briefing(_args):
     print(registry_briefing(rows), end="")
 
 
+# Built-in saved views for laia packets view(s)
+BUILTIN_VIEWS = {
+    "all": {
+        "description": "All packets in the registry.",
+        "filters": {"limit": 0},
+    },
+    "attention": {"description": "Packets needing attention.", "filters": {"attention": True, "limit": 0}},
+    "ready": {"description": "Packets ready for routing or downstream work.", "filters": {"ready": True, "limit": 0}},
+    "ready-unrouted": {
+        "description": "Ready packets without route_status.",
+        "filters": {"ready": True, "limit": 0},
+        "post_filter": lambda row: not bool(row_value(row, "route_status", "")),
+    },
+    "routed": {"description": "Packets with any route_status.", "filters": {"routed": True, "limit": 0}},
+    "queued-routes": {"description": "Packets with route_status queued.", "filters": {"route_status": "queued", "limit": 0}},
+    "executed-routes": {"description": "Packets with route_status executed.", "filters": {"route_status": "executed", "limit": 0}},
+    "executed-unreviewed": {
+        "description": "Packets with executed routes and no reviewed output.",
+        "filters": {"route_status": "executed", "limit": 0},
+        "post_filter": lambda row: (row_value(row, "output_review_status", "") or "") != "reviewed",
+    },
+    "reviewed-outputs": {"description": "Packets with output_review_status reviewed.", "filters": {"output_review": "reviewed", "limit": 0}},
+    "promoted": {"description": "Packets with promotion_status promoted.", "filters": {"promotion_status": "promoted", "limit": 0}},
+    "unpromoted-reviewed-outputs": {
+        "description": "Packets with reviewed outputs but no promotion_status.",
+        "filters": {"output_review": "reviewed", "limit": 0},
+        "post_filter": lambda row: not bool(row_value(row, "promotion_status", "")),
+    },
+    "publication-ready": {
+        "description": "Packets promoted to publication.",
+        "filters": {"promotion_status": "promoted", "promotion_type": "publication", "limit": 0},
+    },
+    "project-ready": {
+        "description": "Packets promoted to project.",
+        "filters": {"promotion_status": "promoted", "promotion_type": "project", "limit": 0},
+    },
+    "photo": {"description": "Photo ingest packets.", "filters": {"packet_type": "laia.photo_ingest", "limit": 0}},
+    "paper": {"description": "Paper ingest packets.", "filters": {"packet_type": "laia.paper_ingest", "limit": 0}},
+    "healthy": {
+        "description": "Verified packets with no attention condition.",
+        "filters": {"verification": "ok", "limit": 0},
+        "post_filter": lambda row: not has_attention(row),
+    },
+}
+
+
+def command_packets_views(_args):
+    print("Available saved views:")
+    print()
+    table = [(name, info.get("description", "")) for name, info in sorted(BUILTIN_VIEWS.items())]
+    print_rows(["view", "description"], table)
+
+
+def command_packets_saved_views(args):
+    # alias for views
+    return command_packets_views(args)
+
+
+def command_packets_view(args):
+    name = getattr(args, "view", None)
+    if not name:
+        raise SystemExit("Missing view name. Run: laia packets views")
+    info = BUILTIN_VIEWS.get(name)
+    if info is None:
+        raise SystemExit(f"Unknown view: {name}. See 'laia packets views'.")
+    cfg = config_from_env()
+    rows = load_registry_rows(cfg.db_path)
+    filters = dict(info.get("filters", {}))
+    # apply limit override
+    if getattr(args, "limit", None) is not None:
+        filters["limit"] = int(getattr(args, "limit"))
+    try:
+        matches = search_packets(rows, filters)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    # apply optional post_filter per view
+    post = info.get("post_filter")
+    if post:
+        matches = [row for row in matches if post(row)]
+    if getattr(args, "json", False):
+        print(json.dumps([search_row_json(row) for row in matches], indent=2))
+        return
+    print(f"LAIA Packet View: {name}")
+    print()
+    if not matches:
+        print("No packets matched.")
+        return
+    table = [
+        (
+            row_value(row, "job_id", ""),
+            row_value(row, "packet_type", ""),
+            row_value(row, "review_status", ""),
+            row_value(row, "route_status", ""),
+            row_value(row, "output_review_status", "") or "",
+            row_value(row, "promotion_status", ""),
+            row_value(row, "created_at", ""),
+        )
+        for row in matches
+    ]
+    print_rows(["job_id", "type", "review", "route", "output", "promotion", "created_at"], table)
+
+
 def lifecycle_checksum_count(packet: Path):
     path = checksum_path(packet)
     if not path.exists():
@@ -2555,6 +2657,14 @@ def register_packets_subcommands(sub):
     queue_p = packets_sub.add_parser("queue", help="Show packet lifecycle queues")
     queue_p.add_argument("--status", default=None)
     queue_p.set_defaults(func=command_packets_queue)
+
+    packets_sub.add_parser("views", help="List built-in saved packet views").set_defaults(func=command_packets_views)
+    packets_sub.add_parser("saved-views", help="Alias for views").set_defaults(func=command_packets_saved_views)
+    view_p = packets_sub.add_parser("view", help="Run a saved packet view")
+    view_p.add_argument("view", metavar="VIEW_NAME")
+    view_p.add_argument("--json", action="store_true")
+    view_p.add_argument("--limit", type=int, default=None)
+    view_p.set_defaults(func=command_packets_view)
 
     packets_sub.add_parser("attention", help="Show packets needing operator attention").set_defaults(func=command_packets_attention)
     packets_sub.add_parser("ready", help="Show packets ready for downstream use").set_defaults(func=command_packets_ready)
