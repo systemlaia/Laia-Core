@@ -51,6 +51,7 @@ from .registry import (
     command_packets_route_status,
     command_packets_routes,
     command_packets_scan,
+    command_packets_search,
     command_packets_status,
     command_packets_verify,
     config_from_env as registry_config_from_env,
@@ -62,6 +63,7 @@ from .registry import (
     registry_record,
     registry_report,
     scan_roots,
+    search_packets,
 )
 
 __all__ = [
@@ -113,6 +115,7 @@ __all__ = [
     "command_packets_route_status",
     "command_packets_routes",
     "command_packets_scan",
+    "command_packets_search",
     "command_packets_status",
     "command_packets_verify",
     "registry_config_from_env",
@@ -124,4 +127,5 @@ __all__ = [
     "registry_record",
     "registry_report",
     "scan_roots",
+    "search_packets",
 ]

@@ -39,6 +39,7 @@ from core.packets.registry import (
     command_packets_route_history,
     command_packets_route_status,
     command_packets_routes,
+    command_packets_search,
     config_from_env,
     connect_registry,
     export_csv_path,
@@ -49,6 +50,7 @@ from core.packets.registry import (
     registry_report,
     read_routing,
     scan_roots,
+    search_packets,
     write_routing,
 )
 from core.packets.standard import write_packet_manifest, write_review_sidecar
@@ -146,6 +148,30 @@ class PacketRegistryTests(unittest.TestCase):
                 command_packets_review_output(argparse.Namespace(identifier=job_id, status=status, note="review note"))
         scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
         return packet, db_path, output_path
+
+    def make_search_registry(self, root):
+        photo, db_path, _ = self.reviewed_temp_export(root, job_id="search-photo")
+        promotion_root = root / "promoted"
+        env = self.registry_env(db_path)
+        env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+        with patch.dict(os.environ, env, clear=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_packets_promote(
+                    argparse.Namespace(
+                        identifier="search-photo",
+                        destination_type="publication",
+                        destination="Photo selects",
+                        note="promotion note",
+                        dry_run=False,
+                    )
+                )
+        paper = self.make_paper_packet(root / "paper", job_id="search-paper")
+        (paper / "final").mkdir()
+        (paper / "final" / "final.json").write_text("{}\n", encoding="utf-8")
+        write_workflow_state(paper)
+        self.make_photo_packet(root / "photo", job_id="search-bad", missing_report=True)
+        scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo"), PacketRoot("paper_ingest", root / "paper")])
+        return db_path
 
     def test_registry_record_reads_photo_manifest_review_and_selects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2294,6 +2320,175 @@ class PacketRegistryTests(unittest.TestCase):
             with patch.dict(os.environ, self.registry_env(db_path), clear=False):
                 with self.assertRaisesRegex(SystemExit, "Packet not found"):
                     command_packets_export_lifecycle(argparse.Namespace(identifier="missing-life", format="both", output_dir=None))
+
+    def test_search_by_packet_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"packet_type": "laia.paper_ingest"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-paper"])
+
+    def test_search_by_review_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"review": "reviewed"})
+            self.assertIn("search-photo", [row["job_id"] for row in rows])
+
+    def test_search_by_workflow_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"workflow": "finalized"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-paper"])
+
+    def test_search_by_route_status_and_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"route_status": "executed", "route_type": "export"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_by_output_review_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"output_review": "reviewed"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_by_promotion_status_and_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"promotion_status": "promoted", "promotion_type": "publication"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_by_destination_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"destination": "photo"})
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_by_free_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"text": "promotion note"}, include_sidecars=True)
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_ready_and_attention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            ready = search_packets(load_registry_rows(db_path), {"ready": True})
+            attention = search_packets(load_registry_rows(db_path), {"attention": True})
+            self.assertIn("search-photo", [row["job_id"] for row in ready])
+            self.assertEqual([row["job_id"] for row in attention], ["search-bad"])
+
+    def test_search_shortcuts_promoted_executed_reviewed_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(
+                load_registry_rows(db_path),
+                {"promotion_status": "promoted", "route_status": "executed", "output_review": "reviewed"},
+            )
+            self.assertEqual([row["job_id"] for row in rows], ["search-photo"])
+
+    def test_search_combined_filters_use_and_semantics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            rows = search_packets(load_registry_rows(db_path), {"packet_type": "laia.paper_ingest", "promotion_status": "promoted"})
+            self.assertEqual(rows, [])
+
+    def test_search_empty_results_print_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_search(
+                        argparse.Namespace(
+                            packet_type="none",
+                            review=None,
+                            workflow=None,
+                            verification=None,
+                            route_status=None,
+                            route_type=None,
+                            output_review=None,
+                            promotion_status=None,
+                            promotion_type=None,
+                            destination=None,
+                            text=None,
+                            created_after=None,
+                            created_before=None,
+                            ready=False,
+                            attention=False,
+                            promoted=False,
+                            routed=False,
+                            executed=False,
+                            reviewed_output=False,
+                            limit=50,
+                            json=False,
+                        )
+                    )
+            self.assertIn("No packets matched.", output.getvalue())
+
+    def test_search_json_outputs_valid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_search(
+                        argparse.Namespace(
+                            packet_type=None,
+                            review=None,
+                            workflow=None,
+                            verification=None,
+                            route_status=None,
+                            route_type=None,
+                            output_review=None,
+                            promotion_status=None,
+                            promotion_type=None,
+                            destination=None,
+                            text=None,
+                            created_after=None,
+                            created_before=None,
+                            ready=False,
+                            attention=False,
+                            promoted=True,
+                            routed=False,
+                            executed=False,
+                            reviewed_output=False,
+                            limit=50,
+                            json=True,
+                        )
+                    )
+            data = json.loads(output.getvalue())
+            self.assertEqual(data[0]["job_id"], "search-photo")
+
+    def test_search_invalid_date_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = self.make_search_registry(Path(tmp))
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with self.assertRaisesRegex(SystemExit, "Invalid created-after"):
+                    command_packets_search(
+                        argparse.Namespace(
+                            packet_type=None,
+                            review=None,
+                            workflow=None,
+                            verification=None,
+                            route_status=None,
+                            route_type=None,
+                            output_review=None,
+                            promotion_status=None,
+                            promotion_type=None,
+                            destination=None,
+                            text=None,
+                            created_after="not-a-date",
+                            created_before=None,
+                            ready=False,
+                            attention=False,
+                            promoted=False,
+                            routed=False,
+                            executed=False,
+                            reviewed_output=False,
+                            limit=50,
+                            json=False,
+                        )
+                    )
 
     def test_missing_selected_file_produces_partial_export_result(self):
         with tempfile.TemporaryDirectory() as tmp:

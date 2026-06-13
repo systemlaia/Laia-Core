@@ -953,6 +953,19 @@ def row_value(row, key: str, default=""):
     return default if value is None else value
 
 
+def parse_search_date(value: Optional[str], label: str):
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?", text):
+        return text.rstrip("Z")
+    raise ValueError(f"Invalid {label}: {value}")
+
+
 def has_attention(row) -> bool:
     failure_status = str(row_value(row, "failure_status", "") or "")
     return (
@@ -972,6 +985,90 @@ def is_ready(row) -> bool:
         and row_value(row, "review_status", "") in READY_REVIEW_STATUSES
         and failure_status in ("", "none")
     )
+
+
+def row_text_blob(row, route: Optional[dict] = None) -> str:
+    values = [
+        row_value(row, "job_id", ""),
+        row_value(row, "packet_type", ""),
+        row_value(row, "source", ""),
+        row_value(row, "route_destination", ""),
+        row_value(row, "promotion_destination", ""),
+        row_value(row, "route_execution_output_path", ""),
+        row_value(row, "promotion_output_path", ""),
+        row_value(row, "output_review_note", ""),
+    ]
+    if route:
+        values.extend(
+            [
+                route.get("note", ""),
+                route.get("output_review_note", ""),
+                route.get("promotion_note", ""),
+                route.get("last_execution_note", ""),
+            ]
+        )
+    return "\n".join(str(value) for value in values if value)
+
+
+def search_packets(rows, filters: dict, *, include_sidecars: bool = False):
+    created_after = parse_search_date(filters.get("created_after"), "created-after")
+    created_before = parse_search_date(filters.get("created_before"), "created-before")
+    destination = str(filters.get("destination") or "").lower()
+    text = str(filters.get("text") or "").lower()
+    limit = filters.get("limit")
+    if limit is None:
+        limit = 50
+    limit = int(limit)
+    matches = []
+    for row in rows:
+        if filters.get("packet_type") and row_value(row, "packet_type", "") != filters["packet_type"]:
+            continue
+        if filters.get("review") and row_value(row, "review_status", "") != filters["review"]:
+            continue
+        if filters.get("workflow") and row_value(row, "workflow_status", "") != filters["workflow"]:
+            continue
+        if filters.get("verification"):
+            expected = filters["verification"]
+            actual = row_value(row, "verification_status", "")
+            if expected == "missing":
+                if actual == "ok":
+                    continue
+            elif actual != expected:
+                continue
+        if filters.get("route_status") and row_value(row, "route_status", "") != filters["route_status"]:
+            continue
+        if filters.get("route_type") and row_value(row, "route_destination_type", "") != filters["route_type"]:
+            continue
+        if filters.get("output_review"):
+            actual = row_value(row, "output_review_status", "") or "new"
+            if actual != filters["output_review"]:
+                continue
+        if filters.get("promotion_status") and row_value(row, "promotion_status", "") != filters["promotion_status"]:
+            continue
+        if filters.get("promotion_type") and row_value(row, "promotion_destination_type", "") != filters["promotion_type"]:
+            continue
+        if filters.get("ready") and not is_ready(row):
+            continue
+        if filters.get("attention") and not has_attention(row):
+            continue
+        if filters.get("routed") and not row_value(row, "route_status", ""):
+            continue
+        created_at = str(row_value(row, "created_at", "")).rstrip("Z")
+        if created_after and created_at < created_after:
+            continue
+        if created_before and created_at > created_before:
+            continue
+        route = read_routing(Path(row_value(row, "packet_path", ""))) if include_sidecars and text else None
+        if destination:
+            haystack = f"{row_value(row, 'route_destination', '')}\n{row_value(row, 'promotion_destination', '')}".lower()
+            if destination not in haystack:
+                continue
+        if text and text not in row_text_blob(row, route).lower():
+            continue
+        matches.append(row)
+        if limit and len(matches) >= limit:
+            break
+    return matches
 
 
 def lifecycle_status(row) -> str:
@@ -1297,6 +1394,79 @@ def command_packets_list(_args):
         for row in rows
     ]
     print_rows(["job_id", "packet_type", "assets", "review", "verification", "created_at"], table)
+
+
+def search_filters_from_args(args) -> dict:
+    return {
+        "packet_type": getattr(args, "packet_type", None),
+        "review": getattr(args, "review", None),
+        "workflow": getattr(args, "workflow", None),
+        "verification": getattr(args, "verification", None),
+        "route_status": "executed" if getattr(args, "executed", False) else getattr(args, "route_status", None),
+        "route_type": getattr(args, "route_type", None),
+        "output_review": "reviewed" if getattr(args, "reviewed_output", False) else getattr(args, "output_review", None),
+        "promotion_status": "promoted" if getattr(args, "promoted", False) else getattr(args, "promotion_status", None),
+        "promotion_type": getattr(args, "promotion_type", None),
+        "destination": getattr(args, "destination", None),
+        "text": getattr(args, "text", None),
+        "created_after": getattr(args, "created_after", None),
+        "created_before": getattr(args, "created_before", None),
+        "ready": getattr(args, "ready", False),
+        "attention": getattr(args, "attention", False),
+        "routed": getattr(args, "routed", False),
+        "limit": getattr(args, "limit", 50),
+    }
+
+
+def search_row_json(row) -> dict:
+    return {
+        "job_id": row_value(row, "job_id", ""),
+        "packet_type": row_value(row, "packet_type", ""),
+        "packet_version": row_value(row, "packet_version", ""),
+        "packet_path": row_value(row, "packet_path", ""),
+        "source": row_value(row, "source", ""),
+        "asset_count": row_value(row, "asset_count", ""),
+        "created_at": row_value(row, "created_at", ""),
+        "review_status": row_value(row, "review_status", ""),
+        "workflow_status": row_value(row, "workflow_status", ""),
+        "verification_status": row_value(row, "verification_status", ""),
+        "route_status": row_value(row, "route_status", ""),
+        "route_destination_type": row_value(row, "route_destination_type", ""),
+        "route_destination": row_value(row, "route_destination", ""),
+        "output_review_status": row_value(row, "output_review_status", ""),
+        "promotion_status": row_value(row, "promotion_status", ""),
+        "promotion_destination_type": row_value(row, "promotion_destination_type", ""),
+        "promotion_destination": row_value(row, "promotion_destination", ""),
+    }
+
+
+def command_packets_search(args):
+    cfg = config_from_env()
+    try:
+        rows = search_packets(load_registry_rows(cfg.db_path), search_filters_from_args(args), include_sidecars=bool(getattr(args, "text", None)))
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    if getattr(args, "json", False):
+        print(json.dumps([search_row_json(row) for row in rows], indent=2))
+        return
+    print("LAIA Packet Search")
+    print()
+    if not rows:
+        print("No packets matched.")
+        return
+    table = [
+        (
+            row_value(row, "job_id", ""),
+            row_value(row, "packet_type", ""),
+            row_value(row, "review_status", ""),
+            row_value(row, "route_status", ""),
+            row_value(row, "output_review_status", "") or "",
+            row_value(row, "promotion_status", ""),
+            row_value(row, "created_at", ""),
+        )
+        for row in rows
+    ]
+    print_rows(["job_id", "type", "review", "route", "output", "promotion", "created_at"], table)
 
 
 def command_packets_queue(args):
@@ -2357,6 +2527,30 @@ def register_packets_subcommands(sub):
 
     packets_sub.add_parser("scan", help="Scan packet roots into the registry").set_defaults(func=command_packets_scan)
     packets_sub.add_parser("list", help="List registered packets").set_defaults(func=command_packets_list)
+
+    search_p = packets_sub.add_parser("search", help="Search packet registry rows")
+    search_p.add_argument("--type", dest="packet_type")
+    search_p.add_argument("--review")
+    search_p.add_argument("--workflow")
+    search_p.add_argument("--verification")
+    search_p.add_argument("--route-status")
+    search_p.add_argument("--route-type")
+    search_p.add_argument("--output-review")
+    search_p.add_argument("--promotion-status")
+    search_p.add_argument("--promotion-type")
+    search_p.add_argument("--destination")
+    search_p.add_argument("--text")
+    search_p.add_argument("--created-after")
+    search_p.add_argument("--created-before")
+    search_p.add_argument("--ready", action="store_true")
+    search_p.add_argument("--attention", action="store_true")
+    search_p.add_argument("--promoted", action="store_true")
+    search_p.add_argument("--routed", action="store_true")
+    search_p.add_argument("--executed", action="store_true")
+    search_p.add_argument("--reviewed-output", action="store_true")
+    search_p.add_argument("--limit", type=int, default=50)
+    search_p.add_argument("--json", action="store_true")
+    search_p.set_defaults(func=command_packets_search)
 
     queue_p = packets_sub.add_parser("queue", help="Show packet lifecycle queues")
     queue_p.add_argument("--status", default=None)
