@@ -23,6 +23,11 @@ from core.packets.registry import (
     command_packets_output_files,
     command_packets_output_history,
     command_packets_outputs,
+    command_packets_promote,
+    command_packets_promotion_files,
+    command_packets_promotion_history,
+    command_packets_promotion_status,
+    command_packets_promotions,
     command_packets_queue,
     command_packets_ready,
     command_packets_review_output,
@@ -129,6 +134,14 @@ class PacketRegistryTests(unittest.TestCase):
                 command_packets_execute_route(argparse.Namespace(identifier=job_id, dry_run=False))
         scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
         return packet, db_path, export_root / job_id
+
+    def reviewed_temp_export(self, root, job_id="promote-photo", status="reviewed"):
+        packet, db_path, output_path = self.execute_temp_export(root, job_id=job_id)
+        with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                command_packets_review_output(argparse.Namespace(identifier=job_id, status=status, note="review note"))
+        scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+        return packet, db_path, output_path
 
     def test_registry_record_reads_photo_manifest_review_and_selects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1585,7 +1598,7 @@ class PacketRegistryTests(unittest.TestCase):
             text = registry_briefing(load_registry_rows(db_path))
 
             self.assertIn("Output Review:\n  reviewed: 1", text)
-            self.assertIn("Executed outputs have been reviewed; continue ingest or promote outputs.", text)
+            self.assertIn("Promote reviewed outputs or continue ingest.", text)
             self.assertNotIn("Review executed route outputs.", text)
             self.assertNotIn("Review route outputs or continue ingest.", text)
             self.assertIn("Archive is healthy.", text)
@@ -1605,6 +1618,326 @@ class PacketRegistryTests(unittest.TestCase):
 
             self.assertIn("Output Review:\n  needs_work: 1", text)
             self.assertIn("Resolve outputs marked needs_work.", text)
+
+    def test_promote_refuses_unreviewed_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.execute_temp_export(root, job_id="promote-unreviewed")
+            db_path = root / "registry.db"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(root / "promoted")
+
+            with patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(SystemExit, "Output must be reviewed before promotion"):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="promote-unreviewed",
+                            destination_type="project",
+                            destination="Project",
+                            note="",
+                            dry_run=False,
+                        )
+                    )
+
+    def test_promote_refuses_needs_work_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="promote-needs-work", status="needs_work")
+            db_path = root / "registry.db"
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with self.assertRaisesRegex(SystemExit, "needs_work"):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="promote-needs-work",
+                            destination_type="project",
+                            destination="Project",
+                            note="",
+                            dry_run=False,
+                        )
+                    )
+
+    def test_project_promotion_copies_reviewed_output_to_promotion_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.reviewed_temp_export(root, job_id="project-promote")
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="project-promote",
+                            destination_type="project",
+                            destination="Receipts",
+                            note="promote",
+                            dry_run=False,
+                        )
+                    )
+
+            output = promotion_root / "projects" / "Receipts"
+            self.assertTrue((output / "one.jpg").exists())
+            self.assertTrue((output / "promotion_manifest.json").exists())
+            self.assertTrue((output / "promotion_report.md").exists())
+            self.assertEqual(read_routing(packet)["promotion_status"], "promoted")
+            self.assertEqual(read_routing(packet)["promotion_output_path"], str(output))
+
+    def test_publication_promotion_copies_reviewed_output_to_promotion_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="publication-promote")
+            promotion_root = root / "promoted"
+            env = self.registry_env(root / "registry.db")
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="publication-promote",
+                            destination_type="publication",
+                            destination="Gallery",
+                            note="stage",
+                            dry_run=False,
+                        )
+                    )
+
+            output = promotion_root / "publication" / "Gallery"
+            self.assertTrue((output / "one.jpg").exists())
+            self.assertTrue((output / "promotion_manifest.json").exists())
+
+    def test_archive_promotion_is_sidecar_only_and_does_not_move_packet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.reviewed_temp_export(root, job_id="archive-promote")
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(root / "promoted")
+
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="archive-promote",
+                            destination_type="archive",
+                            destination="",
+                            note="archive",
+                            dry_run=False,
+                        )
+                    )
+
+            self.assertTrue(packet.exists())
+            route = read_routing(packet)
+            self.assertEqual(route["promotion_status"], "promoted")
+            self.assertEqual(route["promotion_result"], "archive_ready")
+            self.assertEqual(route["promotion_output_path"], "")
+
+    def test_hold_promotion_is_sidecar_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.reviewed_temp_export(root, job_id="hold-promote")
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="hold-promote",
+                            destination_type="hold",
+                            destination="",
+                            note="wait",
+                            dry_run=False,
+                        )
+                    )
+
+            route = read_routing(packet)
+            self.assertEqual(route["promotion_status"], "held")
+            self.assertEqual(route["promotion_result"], "held")
+            self.assertEqual(route["promotion_note"], "wait")
+
+    def test_promotion_manifest_and_report_are_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="manifest-promote")
+            promotion_root = root / "promoted"
+            env = self.registry_env(root / "registry.db")
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="manifest-promote",
+                            destination_type="project",
+                            destination="Project",
+                            note="manifest note",
+                            dry_run=False,
+                        )
+                    )
+
+            output = promotion_root / "projects" / "Project"
+            manifest = json.loads((output / "promotion_manifest.json").read_text(encoding="utf-8"))
+            report = (output / "promotion_report.md").read_text(encoding="utf-8")
+            self.assertEqual(manifest["packet_id"], "manifest-promote")
+            self.assertEqual(manifest["promotion_note"], "manifest note")
+            self.assertIn("LAIA Packet Promotion", report)
+
+    def test_promotion_dry_run_creates_nothing_and_does_not_modify_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet, db_path, _ = self.reviewed_temp_export(root, job_id="dry-promote")
+            before = read_routing(packet)
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(
+                            identifier="dry-promote",
+                            destination_type="project",
+                            destination="Project",
+                            note="dry",
+                            dry_run=True,
+                        )
+                    )
+
+            self.assertEqual(read_routing(packet), before)
+            self.assertFalse(promotion_root.exists())
+
+    def test_promotions_command_lists_promoted_packets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="promotions-list")
+            promotion_root = root / "promoted"
+            db_path = root / "registry.db"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="promotions-list", destination_type="archive", destination="", note="", dry_run=False)
+                    )
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_promotions(argparse.Namespace(status=None, destination_type=None))
+
+            self.assertIn("promotions-list", output.getvalue())
+            self.assertIn("archive_ready", output.getvalue())
+
+    def test_promotion_status_shows_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="promotion-status")
+            db_path = root / "registry.db"
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="promotion-status", destination_type="archive", destination="", note="archive", dry_run=False)
+                    )
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_promotion_status(argparse.Namespace(identifier="promotion-status"))
+
+            text = output.getvalue()
+            self.assertIn("Promotion Status:      promoted", text)
+            self.assertIn("Promotion Result:      archive_ready", text)
+            self.assertIn("Promotion Note:        archive", text)
+
+    def test_promotion_files_lists_copied_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="promotion-files")
+            db_path = root / "registry.db"
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="promotion-files", destination_type="project", destination="Project", note="", dry_run=False)
+                    )
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_promotion_files(argparse.Namespace(identifier="promotion-files"))
+
+            text = output.getvalue()
+            self.assertIn("one.jpg", text)
+            self.assertIn("promotion_manifest.json", text)
+            self.assertIn("promotion_report.md", text)
+
+    def test_promotion_history_shows_promotion_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="promotion-history")
+            db_path = root / "registry.db"
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="promotion-history", destination_type="archive", destination="", note="history", dry_run=False)
+                    )
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_promotion_history(argparse.Namespace(identifier="promotion-history"))
+
+            self.assertIn("promoted archive", output.getvalue())
+            self.assertIn("note: history", output.getvalue())
+
+    def test_registry_scan_captures_promotion_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="scan-promotion")
+            db_path = root / "registry.db"
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="scan-promotion", destination_type="archive", destination="", note="archive", dry_run=False)
+                    )
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            row = load_registry_rows(db_path)[0]
+            self.assertEqual(row["promotion_status"], "promoted")
+            self.assertEqual(row["promotion_destination_type"], "archive")
+            self.assertEqual(row["promotion_result"], "archive_ready")
+            self.assertTrue(row["promoted_at"])
+
+    def test_briefing_shows_promotions_section_and_suggests_unpromoted_reviewed_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="briefing-promote-next")
+            db_path = root / "registry.db"
+
+            text = registry_briefing(load_registry_rows(db_path))
+
+            self.assertIn("Promote reviewed outputs or continue ingest.", text)
+            self.assertNotIn("Promotions:", text)
+
+    def test_briefing_changes_after_promotion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.reviewed_temp_export(root, job_id="briefing-promoted")
+            db_path = root / "registry.db"
+            promotion_root = root / "promoted"
+            env = self.registry_env(db_path)
+            env["LAIA_PACKET_PROMOTION_ROOT"] = str(promotion_root)
+            with patch.dict(os.environ, env, clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(
+                        argparse.Namespace(identifier="briefing-promoted", destination_type="project", destination="Project", note="", dry_run=False)
+                    )
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            text = registry_briefing(load_registry_rows(db_path))
+
+            self.assertIn("Promotions:\n  promoted: 1", text)
+            self.assertIn("Promoted Outputs:", text)
+            self.assertIn("1 packet outputs have been promoted.", text)
+            self.assertIn("Promoted outputs are ready for downstream use.", text)
+            self.assertNotIn("Promote reviewed outputs or continue ingest.", text)
 
     def test_missing_selected_file_produces_partial_export_result(self):
         with tempfile.TemporaryDirectory() as tmp:
