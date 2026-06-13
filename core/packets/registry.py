@@ -1506,6 +1506,153 @@ def registry_lifecycle(row, packet: Path, route: Optional[dict] = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def lifecycle_state_label(row) -> str:
+    text = lifecycle_current_state(row)
+    prefix = "Current state: "
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+    return text.rstrip(".")
+
+
+def lifecycle_section(values: dict) -> dict:
+    return {key: value for key, value in values.items() if value not in ("", None)}
+
+
+def lifecycle_report_data(row, packet: Path, generated_at: Optional[str] = None, route: Optional[dict] = None) -> dict:
+    route = route if route is not None else read_routing(packet)
+    generated_at = generated_at or utc_now()
+    checksum_count = lifecycle_checksum_count(packet)
+    timeline = []
+    for timestamp, label in timeline_events(row, route):
+        if ": " in label:
+            event, detail = label.split(": ", 1)
+        else:
+            event, detail = label, ""
+        timeline.append({"timestamp": timestamp, "event": event, "detail": detail})
+    verification = {
+        "verification_status": row_value(row, "verification_status", ""),
+        "missing_required": row_value(row, "missing_required_items", ""),
+    }
+    if checksum_count is not None:
+        verification["checksum_count"] = checksum_count
+    return {
+        "report_type": "laia.packet_lifecycle",
+        "report_version": "0.1",
+        "generated_at": generated_at,
+        "packet": lifecycle_section(
+            {
+                "job_id": row_value(row, "job_id", packet.name),
+                "packet_type": row_value(row, "packet_type", ""),
+                "packet_version": row_value(row, "packet_version", ""),
+                "packet_path": row_value(row, "packet_path", str(packet)),
+                "source": row_value(row, "source", ""),
+                "asset_count": row_value(row, "asset_count", ""),
+                "packet_size": row_value(row, "packet_size", ""),
+                "created_at": row_value(row, "created_at", ""),
+            }
+        ),
+        "verification": lifecycle_section(verification),
+        "review_workflow": lifecycle_section(
+            {
+                "review_status": row_value(row, "review_status", ""),
+                "workflow_status": row_value(row, "workflow_status", ""),
+                "classification_status": row_value(row, "classification_status", ""),
+                "approval_status": row_value(row, "approval_status", ""),
+                "final_status": row_value(row, "final_status", ""),
+                "failure_status": row_value(row, "failure_status", ""),
+                "select_count": row_value(row, "select_count", 0) if int(row_value(row, "select_count", 0) or 0) else "",
+            }
+        ),
+        "route": lifecycle_section(
+            {
+                "route_status": row_value(row, "route_status", ""),
+                "route_destination_type": row_value(row, "route_destination_type", ""),
+                "route_destination": row_value(row, "route_destination", ""),
+                "route_updated_at": row_value(row, "route_updated_at", ""),
+                "route_note": route.get("note", ""),
+            }
+        ),
+        "execution": lifecycle_section(
+            {
+                "route_execution_result": row_value(row, "route_execution_result", ""),
+                "route_execution_output_path": row_value(row, "route_execution_output_path", ""),
+                "route_executed_at": row_value(row, "route_executed_at", ""),
+            }
+        ),
+        "output_review": lifecycle_section(
+            {
+                "output_review_status": row_value(row, "output_review_status", ""),
+                "output_reviewed_at": row_value(row, "output_reviewed_at", ""),
+                "output_review_note": row_value(row, "output_review_note", ""),
+            }
+        ),
+        "promotion": lifecycle_section(
+            {
+                "promotion_status": row_value(row, "promotion_status", ""),
+                "promotion_destination_type": row_value(row, "promotion_destination_type", ""),
+                "promotion_destination": row_value(row, "promotion_destination", ""),
+                "promotion_result": row_value(row, "promotion_result", ""),
+                "promotion_output_path": row_value(row, "promotion_output_path", ""),
+                "promoted_at": row_value(row, "promoted_at", ""),
+                "promotion_note": route.get("promotion_note", ""),
+            }
+        ),
+        "timeline": timeline,
+        "current_state": lifecycle_state_label(row),
+    }
+
+
+def lifecycle_report_markdown(row, packet: Path, generated_at: Optional[str] = None, route: Optional[dict] = None) -> str:
+    route = route if route is not None else read_routing(packet)
+    generated_at = generated_at or utc_now()
+    body = registry_lifecycle(row, packet, route=route)
+    body = body.replace("LAIA Packet Lifecycle\n\n", "", 1)
+    return f"# LAIA Packet Lifecycle Report\n\nGenerated At: {generated_at}\n\n{body}"
+
+
+def lifecycle_output_dir(packet: Path, output_dir: Optional[str] = None) -> Path:
+    if output_dir:
+        return Path(output_dir).expanduser()
+    return Path(packet).expanduser() / "lifecycle"
+
+
+def write_lifecycle_reports(row, packet: Path, report_format: str = "both", output_dir: Optional[str] = None) -> dict:
+    if report_format not in {"md", "json", "both"}:
+        raise ValueError(f"Invalid lifecycle report format: {report_format}")
+    route = read_routing(packet)
+    generated_at = utc_now()
+    destination = lifecycle_output_dir(packet, output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    paths = {"generated_at": generated_at, "output_dir": str(destination), "md": "", "json": ""}
+    if report_format in {"md", "both"}:
+        md_path = destination / "lifecycle_report.md"
+        md_path.write_text(lifecycle_report_markdown(row, packet, generated_at=generated_at, route=route), encoding="utf-8")
+        paths["md"] = str(md_path)
+    if report_format in {"json", "both"}:
+        json_path = destination / "lifecycle_report.json"
+        data = lifecycle_report_data(row, packet, generated_at=generated_at, route=route)
+        json_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        paths["json"] = str(json_path)
+    return paths
+
+
+def lifecycle_report_files(packet: Path) -> dict:
+    folder = Path(packet) / "lifecycle"
+    md_path = folder / "lifecycle_report.md"
+    json_path = folder / "lifecycle_report.json"
+    generated_at = ""
+    if json_path.exists():
+        try:
+            generated_at = json.loads(json_path.read_text(encoding="utf-8")).get("generated_at", "")
+        except Exception:
+            generated_at = ""
+    return {
+        "md": md_path if md_path.exists() else None,
+        "json": json_path if json_path.exists() else None,
+        "generated_at": generated_at,
+    }
+
+
 def command_packets_lifecycle(args):
     cfg = config_from_env()
     try:
@@ -1513,6 +1660,75 @@ def command_packets_lifecycle(args):
     except FileNotFoundError as exc:
         raise SystemExit(str(exc))
     print(registry_lifecycle(row, packet), end="")
+
+
+def command_packets_export_lifecycle(args):
+    cfg = config_from_env()
+    try:
+        row, packet = route_row_for_identifier(args.identifier, cfg.db_path)
+        paths = write_lifecycle_reports(
+            row,
+            packet,
+            report_format=getattr(args, "format", "both") or "both",
+            output_dir=getattr(args, "output_dir", None),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
+    written = [path for key, path in paths.items() if key in {"md", "json"} and path]
+    print("LAIA Packet Lifecycle Export")
+    print()
+    print(f"Packet:          {row_value(row, 'job_id', packet.name)}")
+    print(f"Output Directory: {paths['output_dir']}")
+    print(f"Reports Written:  {len(written)}")
+    for path in written:
+        print(f"  {path}")
+
+
+def command_packets_export_lifecycles(args):
+    cfg = config_from_env()
+    rows = load_registry_rows(cfg.db_path)
+    report_format = getattr(args, "format", "both") or "both"
+    output_root = getattr(args, "output_root", None)
+    packets = 0
+    reports = 0
+    try:
+        for row in rows:
+            packet = Path(row_value(row, "packet_path", ""))
+            output_dir = None
+            if output_root:
+                output_dir = str(Path(output_root).expanduser() / sanitize_folder_name(row_value(row, "job_id", packet.name), packet.name))
+            paths = write_lifecycle_reports(row, packet, report_format=report_format, output_dir=output_dir)
+            packets += 1
+            reports += sum(1 for key in ("md", "json") if paths.get(key))
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    print("LAIA Packet Lifecycle Export")
+    print()
+    print(f"Packets Exported: {packets}")
+    print(f"Reports Written:  {reports}")
+    if output_root:
+        print(f"Output Root:      {Path(output_root).expanduser()}")
+
+
+def command_packets_lifecycle_files(args):
+    cfg = config_from_env()
+    try:
+        row, packet = route_row_for_identifier(args.identifier, cfg.db_path)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+    files = lifecycle_report_files(packet)
+    print("LAIA Packet Lifecycle Files")
+    print()
+    print(f"Packet: {row_value(row, 'job_id', packet.name)}")
+    if not files["md"] and not files["json"]:
+        print("No lifecycle reports found.")
+        return
+    if files["md"]:
+        print(f"Markdown: {files['md']}")
+    if files["json"]:
+        print(f"JSON:     {files['json']}")
+    if files["generated_at"]:
+        print(f"Generated At: {files['generated_at']}")
 
 
 def print_packet_record(row):
@@ -2153,6 +2369,21 @@ def register_packets_subcommands(sub):
     lifecycle_p = packets_sub.add_parser("lifecycle", help="Show packet lifecycle summary")
     lifecycle_p.add_argument("identifier")
     lifecycle_p.set_defaults(func=command_packets_lifecycle)
+
+    export_lifecycle_p = packets_sub.add_parser("export-lifecycle", help="Export packet lifecycle report files")
+    export_lifecycle_p.add_argument("identifier")
+    export_lifecycle_p.add_argument("--format", choices=["md", "json", "both"], default="both")
+    export_lifecycle_p.add_argument("--output-dir", default=None)
+    export_lifecycle_p.set_defaults(func=command_packets_export_lifecycle)
+
+    export_lifecycles_p = packets_sub.add_parser("export-lifecycles", help="Export lifecycle reports for all registered packets")
+    export_lifecycles_p.add_argument("--format", choices=["md", "json", "both"], default="both")
+    export_lifecycles_p.add_argument("--output-root", default=None)
+    export_lifecycles_p.set_defaults(func=command_packets_export_lifecycles)
+
+    lifecycle_files_p = packets_sub.add_parser("lifecycle-files", help="Show packet lifecycle report files")
+    lifecycle_files_p.add_argument("identifier")
+    lifecycle_files_p.set_defaults(func=command_packets_lifecycle_files)
 
     inspect_p = packets_sub.add_parser("inspect", help="Inspect a registered packet")
     inspect_p.add_argument("identifier")

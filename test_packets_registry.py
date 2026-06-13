@@ -18,7 +18,10 @@ from core.packets.registry import (
     command_packets_clear_route,
     command_packets_execute_route,
     command_packets_execute_routes,
+    command_packets_export_lifecycle,
+    command_packets_export_lifecycles,
     command_packets_lifecycle,
+    command_packets_lifecycle_files,
     command_packets_open,
     command_packets_output,
     command_packets_output_files,
@@ -2104,6 +2107,193 @@ class PacketRegistryTests(unittest.TestCase):
             with patch.dict(os.environ, self.registry_env(db_path), clear=False):
                 with self.assertRaisesRegex(SystemExit, "Packet not found"):
                     command_packets_lifecycle(argparse.Namespace(identifier="missing-packet"))
+
+    def test_export_lifecycle_writes_markdown_and_json_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="export-life-default")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="export-life-default", format="both", output_dir=None))
+
+            self.assertTrue((packet / "lifecycle" / "lifecycle_report.md").exists())
+            self.assertTrue((packet / "lifecycle" / "lifecycle_report.json").exists())
+
+    def test_export_lifecycle_format_md_writes_only_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="export-life-md")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="export-life-md", format="md", output_dir=None))
+
+            self.assertTrue((packet / "lifecycle" / "lifecycle_report.md").exists())
+            self.assertFalse((packet / "lifecycle" / "lifecycle_report.json").exists())
+
+    def test_export_lifecycle_format_json_writes_only_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="export-life-json")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="export-life-json", format="json", output_dir=None))
+
+            self.assertFalse((packet / "lifecycle" / "lifecycle_report.md").exists())
+            self.assertTrue((packet / "lifecycle" / "lifecycle_report.json").exists())
+
+    def test_export_lifecycle_output_dir_writes_outside_packet_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="export-life-outside")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            output_dir = root / "reports" / "one"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="export-life-outside", format="both", output_dir=str(output_dir)))
+
+            self.assertTrue((output_dir / "lifecycle_report.md").exists())
+            self.assertTrue((output_dir / "lifecycle_report.json").exists())
+            self.assertFalse((packet / "lifecycle").exists())
+
+    def test_export_lifecycles_writes_reports_for_all_registry_packets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            one = self.make_photo_packet(root / "photo", job_id="export-life-one")
+            two = self.make_photo_packet(root / "photo", job_id="export-life-two")
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_export_lifecycles(argparse.Namespace(format="both", output_root=None))
+
+            self.assertIn("Packets Exported: 2", output.getvalue())
+            self.assertTrue((one / "lifecycle" / "lifecycle_report.md").exists())
+            self.assertTrue((two / "lifecycle" / "lifecycle_report.json").exists())
+
+    def test_export_lifecycles_output_root_creates_one_folder_per_packet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_photo_packet(root / "photo", job_id="export-root-one")
+            self.make_photo_packet(root / "photo", job_id="export-root-two")
+            db_path = root / "registry.db"
+            output_root = root / "lifecycle-exports"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycles(argparse.Namespace(format="json", output_root=str(output_root)))
+
+            self.assertTrue((output_root / "export-root-one" / "lifecycle_report.json").exists())
+            self.assertTrue((output_root / "export-root-two" / "lifecycle_report.json").exists())
+            self.assertFalse((output_root / "export-root-one" / "lifecycle_report.md").exists())
+
+    def test_lifecycle_files_reports_existing_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="life-files")
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="life-files", format="both", output_dir=None))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle_files(argparse.Namespace(identifier="life-files"))
+
+            text = output.getvalue()
+            self.assertIn(str(packet / "lifecycle" / "lifecycle_report.md"), text)
+            self.assertIn("Generated At:", text)
+
+    def test_lifecycle_files_handles_missing_reports_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_photo_packet(root / "photo", job_id="life-files-missing")
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    command_packets_lifecycle_files(argparse.Namespace(identifier="life-files-missing"))
+
+            self.assertIn("No lifecycle reports found.", output.getvalue())
+
+    def test_exported_lifecycle_json_contains_stable_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="life-json-shape")
+            write_review_sidecar(packet, {"review_status": "reviewed"})
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="life-json-shape", format="json", output_dir=None))
+
+            data = json.loads((packet / "lifecycle" / "lifecycle_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["report_type"], "laia.packet_lifecycle")
+            self.assertEqual(data["report_version"], "0.1")
+            self.assertTrue(data["generated_at"])
+            self.assertEqual(data["packet"]["job_id"], "life-json-shape")
+            self.assertIn("timeline", data)
+            self.assertEqual(data["current_state"], "ready for routing")
+
+    def test_exported_lifecycle_markdown_contains_expected_sections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="life-md-shape")
+            db_path = root / "registry.db"
+            scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="life-md-shape", format="md", output_dir=None))
+
+            text = (packet / "lifecycle" / "lifecycle_report.md").read_text(encoding="utf-8")
+            self.assertIn("# LAIA Packet Lifecycle Report", text)
+            self.assertIn("Packet:", text)
+            self.assertIn("Verification:", text)
+            self.assertIn("Timeline:", text)
+            self.assertIn("Current state:", text)
+
+    def test_export_lifecycle_direct_packet_path_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet = self.make_photo_packet(root / "photo", job_id="life-export-direct")
+            db_path = root / "registry.db"
+            connect_registry(db_path).close()
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier=str(packet), format="json", output_dir=None))
+
+            self.assertTrue((packet / "lifecycle" / "lifecycle_report.json").exists())
+
+    def test_export_lifecycle_unknown_packet_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "registry.db"
+            connect_registry(db_path).close()
+
+            with patch.dict(os.environ, self.registry_env(db_path), clear=False):
+                with self.assertRaisesRegex(SystemExit, "Packet not found"):
+                    command_packets_export_lifecycle(argparse.Namespace(identifier="missing-life", format="both", output_dir=None))
 
     def test_missing_selected_file_produces_partial_export_result(self):
         with tempfile.TemporaryDirectory() as tmp:
