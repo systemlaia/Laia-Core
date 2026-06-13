@@ -81,3 +81,7 @@ c_core/test_stardate_core
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# LAIA generated runtime outputs
+projects/
+promoted/
