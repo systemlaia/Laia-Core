@@ -59,17 +59,21 @@ class PacketViewsTests(unittest.TestCase):
             scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
             env = self.helper.registry_env(db_path)
             env["LAIA_PACKET_PROMOTION_ROOT"] = str(root / "promoted")
+            env["LAIA_PACKET_EXPORT_ROOT"] = str(root / "exports")
             with patch.dict(os.environ, env, clear=False):
                 from core.packets.registry import command_packets_route, command_packets_execute_route, command_packets_review_output, command_packets_promote
 
                 # route, execute, and review before promoting to project
-                command_packets_route(argparse.Namespace(identifier="project-photo", destination_type="export", destination="", note=""))
-                command_packets_execute_route(argparse.Namespace(identifier="project-photo", dry_run=False))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_route(argparse.Namespace(identifier="project-photo", destination_type="export", destination="", note=""))
+                    command_packets_execute_route(argparse.Namespace(identifier="project-photo", dry_run=False))
                 # refresh registry
                 scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
-                command_packets_review_output(argparse.Namespace(identifier="project-photo", status="reviewed", note="review note"))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_review_output(argparse.Namespace(identifier="project-photo", status="reviewed", note="review note"))
                 # promote to project
-                command_packets_promote(argparse.Namespace(identifier="project-photo", destination_type="project", destination="My Project", note="note", dry_run=False))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_promote(argparse.Namespace(identifier="project-photo", destination_type="project", destination="My Project", note="note", dry_run=False))
                 scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
                 with patch.dict(os.environ, env, clear=False):
                     out = io.StringIO()
@@ -95,12 +99,14 @@ class PacketViewsTests(unittest.TestCase):
             write_review_sidecar(route, {"review_status": "reviewed"})
             scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
             env = self.helper.registry_env(db_path)
+            env["LAIA_PACKET_EXPORT_ROOT"] = str(root / "exports")
             with patch.dict(os.environ, env, clear=False):
                 from core.packets.registry import command_packets_route, command_packets_execute_route, command_packets_review_output
 
                 # route and execute a packet to create executed-unreviewed
-                command_packets_route(argparse.Namespace(identifier="routed-pkt", destination_type="export", destination="", note=""))
-                command_packets_execute_route(argparse.Namespace(identifier="routed-pkt", dry_run=False))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_packets_route(argparse.Namespace(identifier="routed-pkt", destination_type="export", destination="", note=""))
+                    command_packets_execute_route(argparse.Namespace(identifier="routed-pkt", dry_run=False))
                 # now executed-unreviewed should include routed-pkt
                 # refresh registry to pick up executed state
                 scan_roots(db_path, [PacketRoot("photo_ingest", root / "photo")])
