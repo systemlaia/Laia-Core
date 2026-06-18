@@ -11,6 +11,55 @@ from typing import Optional
 from pathlib import Path
 
 try:
+    from photo_ingest.cohorts import (
+        VALID_COHORT_STATUSES,
+        VALID_SUBJECT_STATUSES,
+        add_files,
+        add_subject,
+        append_cohort_history_event,
+        build_contact_sheet,
+        cohort_dir,
+        create_cohort,
+        export_cohort,
+        latest_cohort_export_path,
+        range_files,
+        read_cohort,
+        read_cohort_index,
+        read_cohort_project_links,
+        read_subjects,
+        remove_cohort_project_link,
+        remove_files,
+        resolve_photo_packet,
+        upsert_cohort_project_link,
+        update_cohort,
+        update_subject,
+    )
+except ModuleNotFoundError:
+    from core.photo_ingest.cohorts import (
+        VALID_COHORT_STATUSES,
+        VALID_SUBJECT_STATUSES,
+        add_files,
+        add_subject,
+        append_cohort_history_event,
+        build_contact_sheet,
+        cohort_dir,
+        create_cohort,
+        export_cohort,
+        latest_cohort_export_path,
+        range_files,
+        read_cohort,
+        read_cohort_index,
+        read_cohort_project_links,
+        read_subjects,
+        remove_cohort_project_link,
+        remove_files,
+        resolve_photo_packet,
+        upsert_cohort_project_link,
+        update_cohort,
+        update_subject,
+    )
+
+try:
     from packets.standard import (
         checksum_path as standard_checksum_path,
         count_checksum_entries,
@@ -1016,6 +1065,360 @@ def command_export_selects(args):
             print(f"  {rel}")
 
 
+def _print_json(data):
+    print(json.dumps(data, indent=2))
+
+
+def _subject_packet(args):
+    return resolve_photo_packet(args.packet)
+
+
+def command_subject_add(args):
+    packet = _subject_packet(args)
+    subject = add_subject(packet, args.subject_name, note=args.note, status=args.status)
+    if args.json:
+        _print_json(subject)
+    else:
+        print(f"{subject['subject_id']}: {subject['name']} ({subject['status']})")
+
+
+def command_subjects(args):
+    packet = _subject_packet(args)
+    subjects = read_subjects(packet).get("subjects", [])
+    if args.status:
+        subjects = [item for item in subjects if item.get("status") == args.status]
+    if args.json:
+        _print_json(subjects)
+        return
+    print_rows(
+        ["subject_id", "name", "status", "note", "updated_at"],
+        [
+            (
+                item.get("subject_id", ""),
+                item.get("name", ""),
+                item.get("status", ""),
+                item.get("note", ""),
+                item.get("updated_at", ""),
+            )
+            for item in subjects
+        ],
+    )
+
+
+def command_subject_update(args):
+    packet = _subject_packet(args)
+    if args.name is None and args.note is None and args.status is None:
+        raise SystemExit("Supply at least one of --name, --note, or --status.")
+    subject = update_subject(packet, args.subject_id, name=args.name, note=args.note, status=args.status)
+    print(f"Updated subject: {subject['subject_id']}")
+
+
+def command_subject_archive(args):
+    packet = _subject_packet(args)
+    subject = update_subject(packet, args.subject_id, status="archived")
+    print(f"Archived subject: {subject['subject_id']}")
+
+
+def command_cohort_create(args):
+    packet = _subject_packet(args)
+    cohort = create_cohort(
+        packet,
+        args.cohort_name,
+        subject=args.subject,
+        description=args.description or "",
+        parent=args.parent,
+        status=args.status,
+    )
+    if args.json:
+        _print_json(cohort)
+    else:
+        print(f"{cohort['cohort_id']}: {cohort['name']} ({cohort['status']})")
+
+
+def command_cohorts(args):
+    packet = _subject_packet(args)
+    entries = read_cohort_index(packet).get("cohorts", [])
+    if args.status:
+        entries = [item for item in entries if item.get("status") == args.status]
+    if args.subject:
+        subjects = read_subjects(packet)
+        subject = next(
+            (
+                item
+                for item in subjects.get("subjects", [])
+                if item.get("subject_id") == args.subject
+                or str(item.get("name", "")).lower() == args.subject.lower()
+            ),
+            None,
+        )
+        subject_id = subject["subject_id"] if subject else args.subject
+        entries = [item for item in entries if item.get("subject_id") == subject_id]
+    if args.json:
+        _print_json(entries)
+        return
+    print_rows(
+        ["cohort_id", "name", "subject", "parent", "status", "file_count", "updated_at"],
+        [
+            (
+                item.get("cohort_id", ""),
+                item.get("name", ""),
+                item.get("subject_id") or "",
+                item.get("parent_cohort_id") or "",
+                item.get("status", ""),
+                item.get("file_count", 0),
+                item.get("updated_at", ""),
+            )
+            for item in entries
+        ],
+    )
+
+
+def command_cohort_show(args):
+    packet = _subject_packet(args)
+    cohort = read_cohort(packet, args.cohort)
+    if args.json:
+        _print_json(cohort)
+        return
+    print(f"Cohort: {cohort['name']} ({cohort['cohort_id']})")
+    print(f"Description: {cohort.get('description', '')}")
+    print(f"Subject: {cohort.get('subject_id') or 'none'}")
+    print(f"Parent: {cohort.get('parent_cohort_id') or 'none'}")
+    print(f"Status: {cohort.get('status', '')}")
+    print(f"File count: {len(cohort.get('files', []))}")
+    print(f"Contact sheet: {cohort_dir(packet, cohort['cohort_id']) / 'contact_sheet.jpg'}")
+    files = [item["relative_path"] for item in cohort.get("files", [])]
+    if files:
+        print("Files:")
+        shown = files if len(files) <= 25 else files[:25]
+        for value in shown:
+            print(f"  {value}")
+        if len(shown) < len(files):
+            print(f"  ...and {len(files) - len(shown)} more")
+
+
+def command_cohort_add(args):
+    packet = _subject_packet(args)
+    cohort, added = add_files(packet, args.cohort, args.files, note=args.note or "")
+    result = {"cohort_id": cohort["cohort_id"], "added": added, "file_count": len(cohort["files"])}
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Added: {len(added)}")
+        print(f"Cohort file count: {len(cohort['files'])}")
+
+
+def command_cohort_add_range(args):
+    packet = _subject_packet(args)
+    selected = range_files(packet, args.folder, args.range_from, args.range_to)
+    print(f"Range contains {len(selected)} existing files.")
+    if args.dry_run:
+        result = {"dry_run": True, "count": len(selected), "files": selected}
+    else:
+        cohort, added = add_files(packet, args.cohort, selected, event="range_added")
+        result = {
+            "dry_run": False,
+            "range_count": len(selected),
+            "added": added,
+            "file_count": len(cohort["files"]),
+        }
+    if args.json:
+        _print_json(result)
+    elif args.dry_run:
+        for value in selected:
+            print(value)
+    else:
+        print(f"Added: {len(result['added'])}")
+
+
+def command_cohort_remove(args):
+    packet = _subject_packet(args)
+    cohort, removed = remove_files(packet, args.cohort, args.files)
+    result = {"cohort_id": cohort["cohort_id"], "removed": removed, "file_count": len(cohort["files"])}
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Removed memberships: {len(removed)}")
+        print(f"Cohort file count: {len(cohort['files'])}")
+
+
+def command_cohort_update(args):
+    packet = _subject_packet(args)
+    supplied = any(
+        value is not None
+        for value in [args.name, args.description, args.subject, args.parent, args.status]
+    ) or args.clear_parent or args.clear_subject
+    if not supplied:
+        raise SystemExit("Supply at least one cohort update option.")
+    cohort = update_cohort(
+        packet,
+        args.cohort,
+        name=args.name,
+        description=args.description,
+        subject=args.subject,
+        parent=args.parent,
+        status=args.status,
+        clear_parent=args.clear_parent,
+        clear_subject=args.clear_subject,
+    )
+    print(f"Updated cohort: {cohort['cohort_id']}")
+
+
+def command_cohort_contact_sheet(args):
+    packet = _subject_packet(args)
+    result = build_contact_sheet(packet, args.cohort, limit=args.limit, columns=args.columns)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Contact sheet: {result['path']}")
+        print(f"Files: {result['file_count']}")
+
+
+def command_cohort_export(args):
+    packet = _subject_packet(args)
+    result = export_cohort(packet, args.cohort, destination=args.destination)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Export folder: {result['destination']}")
+        print(f"Copied: {result['file_count']}")
+        print(f"Manifest: {result['manifest']}")
+
+
+def command_cohort_history(args):
+    packet = _subject_packet(args)
+    history = read_cohort(packet, args.cohort).get("history", [])
+    if args.json:
+        _print_json(history)
+        return
+    if not history:
+        print("No cohort history.")
+        return
+    for event in history:
+        details = []
+        if event.get("count") is not None:
+            details.append(f"{event['count']} files")
+        if event.get("destination"):
+            details.append(event["destination"])
+        suffix = f" - {', '.join(details)}" if details else ""
+        print(f"{event.get('timestamp', '')}  {event.get('event', '')}{suffix}")
+
+
+def _projects_registry_module():
+    try:
+        from projects import registry as projects_registry
+    except (ImportError, ModuleNotFoundError):
+        from core.projects import registry as projects_registry
+    return projects_registry
+
+
+def command_cohort_link_project(args):
+    packet = _subject_packet(args)
+    cohort = read_cohort(packet, args.cohort)
+    projects_registry = _projects_registry_module()
+    project = projects_registry.ensure_project_record(args.project, args.type)
+    project_id = project["project_id"]
+    linked_at = utc_now()
+    artifact_path = args.artifact or latest_cohort_export_path(packet, cohort)
+    packet_info = {
+        "job_id": packet.name if not (packet / "packet_manifest.json").exists() else json.loads(
+            (packet / "packet_manifest.json").read_text(encoding="utf-8")
+        ).get("job_id", packet.name),
+        "packet_type": "laia.photo_ingest",
+        "packet_path": str(packet),
+    }
+    projects_registry.add_packet_to_project(project_id, packet_info, linked_at)
+    if artifact_path:
+        projects_registry.add_artifact_to_project(
+            project_id,
+            artifact_path,
+            packet_info["job_id"],
+            linked_at,
+            artifact_type="photo_cohort_export",
+        )
+    cohort_path = cohort_dir(packet, cohort["cohort_id"])
+    contribution = {
+        "packet_id": packet_info["job_id"],
+        "packet_path": str(packet),
+        "cohort_id": cohort["cohort_id"],
+        "cohort_name": cohort["name"],
+        "cohort_path": str(cohort_path),
+        "cohort_status": cohort.get("status", ""),
+        "file_count": len(cohort.get("files", [])),
+        "artifact_path": artifact_path or "",
+        "linked_at": linked_at,
+    }
+    projects_registry.add_cohort_to_project(project_id, contribution)
+    sidecar_entry = {
+        "project_id": project_id,
+        "project_name": project.get("name", args.project),
+        "project_type": project.get("project_type", args.type),
+        "project_record_path": str(projects_registry.project_folder(project_id)),
+        "artifact_path": artifact_path or "",
+        "linked_at": linked_at,
+        "note": args.note or "",
+    }
+    existing_links = read_cohort_project_links(packet, cohort["cohort_id"]).get("links", [])
+    is_new = not any(str(item.get("project_id", "")) == project_id for item in existing_links)
+    link = upsert_cohort_project_link(packet, cohort["cohort_id"], sidecar_entry)
+    if is_new:
+        append_cohort_history_event(
+            packet,
+            cohort,
+            {"event": "project_linked", "project_id": project_id, "timestamp": linked_at},
+        )
+    result = {"project": project, "cohort": contribution, "link": link}
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Linked cohort {cohort['cohort_id']} -> project {project_id}")
+
+
+def command_cohort_unlink_project(args):
+    packet = _subject_packet(args)
+    cohort = read_cohort(packet, args.cohort)
+    projects_registry = _projects_registry_module()
+    try:
+        project_id = projects_registry.find_project(args.project)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+    packet_identifier = json.loads((packet / "packet_manifest.json").read_text(encoding="utf-8")).get(
+        "job_id", packet.name
+    )
+    project_removed = projects_registry.remove_cohort_from_project(
+        project_id, packet_identifier, cohort["cohort_id"]
+    )
+    sidecar_removed = remove_cohort_project_link(packet, cohort["cohort_id"], project_id)
+    if project_removed or sidecar_removed:
+        append_cohort_history_event(
+            packet,
+            cohort,
+            {"event": "project_unlinked", "project_id": project_id, "timestamp": utc_now()},
+        )
+    print(f"Unlinked cohort {cohort['cohort_id']} from project {project_id}")
+
+
+def command_cohort_project_links(args):
+    packet = _subject_packet(args)
+    cohort = read_cohort(packet, args.cohort)
+    links = read_cohort_project_links(packet, cohort["cohort_id"]).get("links", [])
+    if args.json:
+        _print_json(links)
+        return
+    print_rows(
+        ["project_id", "project_name", "project_type", "artifact_path", "linked_at"],
+        [
+            (
+                link.get("project_id", ""),
+                link.get("project_name", ""),
+                link.get("project_type", ""),
+                link.get("artifact_path", ""),
+                link.get("linked_at", ""),
+            )
+            for link in links
+        ],
+    )
+
+
 def register_photo_subcommands(sub):
     photo_p = sub.add_parser("photo", help="Photo ingest commands")
     photo_sub = photo_p.add_subparsers(dest="photo_command")
@@ -1064,6 +1467,136 @@ def register_photo_subcommands(sub):
     export_p = photo_sub.add_parser("export-selects", help="Export latest packet selects")
     export_p.add_argument("destination")
     export_p.set_defaults(func=command_export_selects)
+
+    subject_add_p = photo_sub.add_parser("subject-add", help="Add a named subject to a photo packet")
+    subject_add_p.add_argument("packet")
+    subject_add_p.add_argument("subject_name")
+    subject_add_p.add_argument("--note", default=None)
+    subject_add_p.add_argument("--status", choices=sorted(VALID_SUBJECT_STATUSES), default=None)
+    subject_add_p.add_argument("--json", action="store_true")
+    subject_add_p.set_defaults(func=command_subject_add)
+
+    subjects_p = photo_sub.add_parser("subjects", help="List photo packet subjects")
+    subjects_p.add_argument("packet")
+    subjects_p.add_argument("--status", choices=sorted(VALID_SUBJECT_STATUSES))
+    subjects_p.add_argument("--json", action="store_true")
+    subjects_p.set_defaults(func=command_subjects)
+
+    subject_update_p = photo_sub.add_parser("subject-update", help="Update a photo packet subject")
+    subject_update_p.add_argument("packet")
+    subject_update_p.add_argument("subject_id")
+    subject_update_p.add_argument("--name")
+    subject_update_p.add_argument("--note")
+    subject_update_p.add_argument("--status", choices=sorted(VALID_SUBJECT_STATUSES))
+    subject_update_p.set_defaults(func=command_subject_update)
+
+    subject_archive_p = photo_sub.add_parser("subject-archive", help="Archive a photo packet subject")
+    subject_archive_p.add_argument("packet")
+    subject_archive_p.add_argument("subject_id")
+    subject_archive_p.set_defaults(func=command_subject_archive)
+
+    cohort_create_p = photo_sub.add_parser("cohort-create", help="Create a reusable photo cohort")
+    cohort_create_p.add_argument("packet")
+    cohort_create_p.add_argument("cohort_name")
+    cohort_create_p.add_argument("--subject")
+    cohort_create_p.add_argument("--description")
+    cohort_create_p.add_argument("--parent")
+    cohort_create_p.add_argument("--status", choices=sorted(VALID_COHORT_STATUSES), default="new")
+    cohort_create_p.add_argument("--json", action="store_true")
+    cohort_create_p.set_defaults(func=command_cohort_create)
+
+    cohorts_p = photo_sub.add_parser("cohorts", help="List photo packet cohorts")
+    cohorts_p.add_argument("packet")
+    cohorts_p.add_argument("--status", choices=sorted(VALID_COHORT_STATUSES))
+    cohorts_p.add_argument("--subject")
+    cohorts_p.add_argument("--json", action="store_true")
+    cohorts_p.set_defaults(func=command_cohorts)
+
+    cohort_show_p = photo_sub.add_parser("cohort-show", help="Show photo cohort details")
+    cohort_show_p.add_argument("packet")
+    cohort_show_p.add_argument("cohort")
+    cohort_show_p.add_argument("--json", action="store_true")
+    cohort_show_p.set_defaults(func=command_cohort_show)
+
+    cohort_add_p = photo_sub.add_parser("cohort-add", help="Add original files to a cohort")
+    cohort_add_p.add_argument("packet")
+    cohort_add_p.add_argument("cohort")
+    cohort_add_p.add_argument("files", nargs="+")
+    cohort_add_p.add_argument("--note")
+    cohort_add_p.add_argument("--json", action="store_true")
+    cohort_add_p.set_defaults(func=command_cohort_add)
+
+    cohort_range_p = photo_sub.add_parser("cohort-add-range", help="Add a natural filename range to a cohort")
+    cohort_range_p.add_argument("packet")
+    cohort_range_p.add_argument("cohort")
+    cohort_range_p.add_argument("--folder", required=True)
+    cohort_range_p.add_argument("--from", dest="range_from", required=True)
+    cohort_range_p.add_argument("--to", dest="range_to", required=True)
+    cohort_range_p.add_argument("--dry-run", action="store_true")
+    cohort_range_p.add_argument("--json", action="store_true")
+    cohort_range_p.set_defaults(func=command_cohort_add_range)
+
+    cohort_remove_p = photo_sub.add_parser("cohort-remove", help="Remove cohort membership")
+    cohort_remove_p.add_argument("packet")
+    cohort_remove_p.add_argument("cohort")
+    cohort_remove_p.add_argument("files", nargs="+")
+    cohort_remove_p.add_argument("--json", action="store_true")
+    cohort_remove_p.set_defaults(func=command_cohort_remove)
+
+    cohort_update_p = photo_sub.add_parser("cohort-update", help="Update cohort metadata")
+    cohort_update_p.add_argument("packet")
+    cohort_update_p.add_argument("cohort")
+    cohort_update_p.add_argument("--name")
+    cohort_update_p.add_argument("--description")
+    cohort_update_p.add_argument("--subject")
+    cohort_update_p.add_argument("--parent")
+    cohort_update_p.add_argument("--status", choices=sorted(VALID_COHORT_STATUSES))
+    cohort_update_p.add_argument("--clear-parent", action="store_true")
+    cohort_update_p.add_argument("--clear-subject", action="store_true")
+    cohort_update_p.set_defaults(func=command_cohort_update)
+
+    contact_p = photo_sub.add_parser("cohort-contact-sheet", help="Build a cohort contact sheet")
+    contact_p.add_argument("packet")
+    contact_p.add_argument("cohort")
+    contact_p.add_argument("--limit", type=int)
+    contact_p.add_argument("--columns", type=int, default=5)
+    contact_p.add_argument("--json", action="store_true")
+    contact_p.set_defaults(func=command_cohort_contact_sheet)
+
+    cohort_export_p = photo_sub.add_parser("cohort-export", help="Export cohort originals and metadata")
+    cohort_export_p.add_argument("packet")
+    cohort_export_p.add_argument("cohort")
+    cohort_export_p.add_argument("destination", nargs="?")
+    cohort_export_p.add_argument("--json", action="store_true")
+    cohort_export_p.set_defaults(func=command_cohort_export)
+
+    history_p = photo_sub.add_parser("cohort-history", help="Show cohort history")
+    history_p.add_argument("packet")
+    history_p.add_argument("cohort")
+    history_p.add_argument("--json", action="store_true")
+    history_p.set_defaults(func=command_cohort_history)
+
+    link_project_p = photo_sub.add_parser("cohort-link-project", help="Link a photo cohort to a project")
+    link_project_p.add_argument("packet")
+    link_project_p.add_argument("cohort")
+    link_project_p.add_argument("--project", required=True)
+    link_project_p.add_argument("--type", choices=["project", "publication"], default="project")
+    link_project_p.add_argument("--artifact")
+    link_project_p.add_argument("--note")
+    link_project_p.add_argument("--json", action="store_true")
+    link_project_p.set_defaults(func=command_cohort_link_project)
+
+    unlink_project_p = photo_sub.add_parser("cohort-unlink-project", help="Unlink a cohort from a project")
+    unlink_project_p.add_argument("packet")
+    unlink_project_p.add_argument("cohort")
+    unlink_project_p.add_argument("--project", required=True)
+    unlink_project_p.set_defaults(func=command_cohort_unlink_project)
+
+    project_links_p = photo_sub.add_parser("cohort-project-links", help="List project links for a cohort")
+    project_links_p.add_argument("packet")
+    project_links_p.add_argument("cohort")
+    project_links_p.add_argument("--json", action="store_true")
+    project_links_p.set_defaults(func=command_cohort_project_links)
 
 
 def _normalize_recent_args(args):

@@ -38,9 +38,21 @@ from librarian.inspect_extract import command_inspect_extract
 from librarian.correct_classification import command_correct_classification
 from grocy_service import command_grocy_checkins_draft, command_grocy_status
 from workflow.scan_document import command_scan_document
-from photo_ingest.commands import register_photo_subcommands
+try:
+    from photo_ingest.commands import register_photo_subcommands
+except (ImportError, ModuleNotFoundError):
+    from core.photo_ingest.commands import register_photo_subcommands
 from paper_ingest.standardize import register_paper_subcommands
 from packets.registry import register_packets_subcommands
+from projects.registry import (
+    command_projects_artifacts,
+    command_projects_briefing,
+    command_projects_inspect,
+    command_projects_list,
+    command_projects_packets,
+    command_projects_search,
+    register_projects_subcommands,
+)
 
 LAIA_ROOT = Path(os.environ.get("LAIA_ROOT", os.path.expanduser("~/LAIA")))
 
@@ -1002,6 +1014,7 @@ def build_parser():
     sync_sub.add_parser("pull")
 
     register_packets_subcommands(sub)
+    register_projects_subcommands(sub)
     register_paper_subcommands(sub)
     register_photo_subcommands(sub)
 
@@ -1223,6 +1236,20 @@ def main():
         args.func(args)
     elif args.command == "packets" and hasattr(args, "func"):
         args.func(args)
+    elif args.command == "projects":
+        project_dispatch = {
+            "list": command_projects_list,
+            "briefing": command_projects_briefing,
+            "inspect": command_projects_inspect,
+            "packets": command_projects_packets,
+            "artifacts": command_projects_artifacts,
+            "search": command_projects_search,
+        }
+        func = getattr(args, "func", None) or project_dispatch.get(getattr(args, "projects_command", None))
+        if func:
+            func(args)
+        else:
+            parser.print_help()
     elif args.command == "paper" and hasattr(args, "func"):
         args.func(args)
     elif args.command == "workflow" and args.subcommand == "scan-document":

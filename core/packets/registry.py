@@ -38,6 +38,8 @@ DEFAULT_PAPER_PACKET_ROOT = Path("~/LAIA/Inbox/Ingest/Scans").expanduser()
 DEFAULT_PACKET_EXPORT_ROOT = Path("~/LAIA/exports/packets").expanduser()
 DEFAULT_PACKET_PROJECT_ROOT = Path("~/LAIA/projects").expanduser()
 DEFAULT_PACKET_PROMOTION_ROOT = Path("~/LAIA/promoted").expanduser()
+DEFAULT_PROJECT_REGISTRY_ROOT = Path("~/LAIA/projects_registry").expanduser()
+PROJECT_REGISTRY_ENV = "LAIA_PROJECT_REGISTRY_ROOT"
 DEFAULT_REGISTRY_DB_NAME = "packet_registry.db"
 PAPER_REQUIRED_ITEMS = (
     "originals",
@@ -143,6 +145,10 @@ CREATE TABLE IF NOT EXISTS packets (
     promotion_result TEXT,
     promotion_output_path TEXT,
     promoted_at TEXT,
+    photo_subject_count INTEGER,
+    photo_subjects TEXT,
+    photo_cohort_count INTEGER,
+    photo_cohorts TEXT,
     scanned_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -181,6 +187,12 @@ def connect_registry(db_path: Path):
         "ALTER TABLE packets ADD COLUMN promotion_result TEXT;",
         "ALTER TABLE packets ADD COLUMN promotion_output_path TEXT;",
         "ALTER TABLE packets ADD COLUMN promoted_at TEXT;",
+        "ALTER TABLE packets ADD COLUMN project_link_count INTEGER;",
+        "ALTER TABLE packets ADD COLUMN project_ids TEXT;",
+        "ALTER TABLE packets ADD COLUMN photo_subject_count INTEGER;",
+        "ALTER TABLE packets ADD COLUMN photo_subjects TEXT;",
+        "ALTER TABLE packets ADD COLUMN photo_cohort_count INTEGER;",
+        "ALTER TABLE packets ADD COLUMN photo_cohorts TEXT;",
     ]:
         try:
             conn.execute(sql)
@@ -606,6 +618,113 @@ def promotion_output_root(destination_type: str, destination: str, job_id: str) 
     return None
 
 
+def project_registry_root() -> Path:
+    return Path(os.environ.get(PROJECT_REGISTRY_ENV, str(DEFAULT_PROJECT_REGISTRY_ROOT))).expanduser()
+
+
+def project_slug(name: str) -> str:
+    text = str(name or "").strip().lower()
+    chars = []
+    for ch in text:
+        if ch.isalnum():
+            chars.append(ch)
+        elif ch in (" ", "-", "_"):
+            chars.append("-")
+    slug = "".join(chars)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "project"
+
+
+def project_links_sidecar_path(packet: Path) -> Path:
+    return Path(packet) / "review" / "project_links.json"
+
+
+def read_project_links(packet: Path) -> dict:
+    path = project_links_sidecar_path(packet)
+    if not path.exists():
+        return {"links": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"links": []}
+    if not isinstance(data, dict):
+        return {"links": []}
+    links = data.get("links")
+    if not isinstance(links, list):
+        return {"links": []}
+    return {"links": links}
+
+
+def write_project_links(packet: Path, data: dict) -> None:
+    path = project_links_sidecar_path(packet)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def packet_project_link_ids(packet: Path) -> List[str]:
+    links = read_project_links(packet).get("links", [])
+    return sorted({str(link.get("project_id", "")) for link in links if link.get("project_id")})
+
+
+def packet_project_link_count(packet: Path) -> int:
+    links = read_project_links(packet).get("links", [])
+    return len(links)
+
+
+def upsert_packet_project_link(packet: Path, entry: dict) -> None:
+    data = read_project_links(packet)
+    links = data.get("links", [])
+    project_id = str(entry.get("project_id", ""))
+    existing = next((link for link in links if str(link.get("project_id", "")) == project_id), None)
+    if existing:
+        existing.update(entry)
+    else:
+        links.append(entry)
+    data["links"] = links
+    write_project_links(packet, data)
+
+
+def remove_packet_project_link(packet: Path, project_id: str) -> bool:
+    data = read_project_links(packet)
+    links = data.get("links", [])
+    filtered = [link for link in links if str(link.get("project_id", "")) != project_id]
+    if len(filtered) == len(links):
+        return False
+    data["links"] = filtered
+    write_project_links(packet, data)
+    return True
+
+
+def packet_project_link_entry(
+    packet: Path,
+    project_id: str,
+    project_name: str,
+    project_type: str,
+    project_record_path: Path,
+    artifact_path: Optional[str],
+    linked_at: str,
+    link_role: str = "source",
+) -> dict:
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "project_type": project_type,
+        "project_record_path": str(project_record_path),
+        "artifact_path": str(Path(artifact_path).expanduser()) if artifact_path else "",
+        "link_role": link_role,
+        "linked_at": linked_at,
+    }
+
+
+def sync_packet_registry_record(packet: Path, db_path: Path) -> None:
+    record = registry_record("direct", packet)
+    conn = connect_registry(db_path)
+    upsert_registry_record(conn, record)
+    conn.commit()
+    conn.close()
+
+
 def copy_output_tree(source: Path, destination: Path) -> int:
     source = Path(source)
     destination = Path(destination)
@@ -757,6 +876,20 @@ def registry_record(root_name: str, packet: Path, required_items: Optional[Itera
     route = read_routing(packet)
 
     missing = list(validation.missing)
+    packet_links = read_project_links(packet).get("links", [])
+    project_ids = ",".join(sorted({str(link.get("project_id", "")) for link in packet_links if link.get("project_id")}))
+    photo_metadata = {
+        "photo_subject_count": 0,
+        "photo_subjects": [],
+        "photo_cohort_count": 0,
+        "photo_cohorts": [],
+    }
+    if packet_type == "laia.photo_ingest":
+        try:
+            from photo_ingest.cohorts import photo_registry_metadata
+        except ModuleNotFoundError:
+            from core.photo_ingest.cohorts import photo_registry_metadata
+        photo_metadata = photo_registry_metadata(packet)
     return {
         "packet_path": str(packet),
         "root_name": root_name,
@@ -792,6 +925,12 @@ def registry_record(root_name: str, packet: Path, required_items: Optional[Itera
         "promotion_result": str(route.get("promotion_result", "")),
         "promotion_output_path": str(route.get("promotion_output_path", "")),
         "promoted_at": str(route.get("promoted_at", "")),
+        "project_link_count": len(packet_links),
+        "project_ids": project_ids,
+        "photo_subject_count": photo_metadata["photo_subject_count"],
+        "photo_subjects": json.dumps(photo_metadata["photo_subjects"]),
+        "photo_cohort_count": photo_metadata["photo_cohort_count"],
+        "photo_cohorts": json.dumps(photo_metadata["photo_cohorts"]),
     }
 
 
@@ -809,9 +948,11 @@ def upsert_registry_record(conn, record: dict) -> None:
             output_review_status, output_review_note, output_reviewed_at,
             promotion_status, promotion_destination_type, promotion_destination,
             promotion_result, promotion_output_path, promoted_at,
+            project_link_count, project_ids,
+            photo_subject_count, photo_subjects, photo_cohort_count, photo_cohorts,
             scanned_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
         (
             record["packet_path"],
@@ -848,6 +989,12 @@ def upsert_registry_record(conn, record: dict) -> None:
             record.get("promotion_result", ""),
             record.get("promotion_output_path", ""),
             record.get("promoted_at", ""),
+            record.get("project_link_count", 0),
+            record.get("project_ids", ""),
+            record.get("photo_subject_count", 0),
+            record.get("photo_subjects", "[]"),
+            record.get("photo_cohort_count", 0),
+            record.get("photo_cohorts", "[]"),
         ),
     )
 
@@ -1268,6 +1415,11 @@ def registry_briefing(rows) -> str:
     total_assets = sum(int(row_value(row, "asset_count", 0) or 0) for row in rows)
     recent = sorted(rows, key=lambda row: str(row_value(row, "created_at", "")), reverse=True)[:5]
 
+    project_ids = set()
+    for row in rows:
+        for pid in str(row_value(row, "project_ids", "")).split(","):
+            if pid:
+                project_ids.add(pid)
     lines = [
         "LAIA Packet Briefing",
         "",
@@ -1277,9 +1429,13 @@ def registry_briefing(rows) -> str:
         f"  Attention: {len(attention)}",
         f"  Ready: {len(ready)}",
         f"  Total assets: {total_assets}",
+    ]
+    if project_ids:
+        lines.append(f"  Linked Projects: {len(project_ids)}")
+    lines.extend([
         "",
         "Packet Types:",
-    ]
+    ])
     if rows:
         for packet_type, count in type_counts(rows):
             lines.append(f"  {packet_type}: {count}")
@@ -1731,6 +1887,23 @@ def registry_lifecycle(row, packet: Path, route: Optional[dict] = None) -> str:
             lines.append(f"  {key}: {row_value(row, key, '')}")
     if int(row_value(row, "select_count", 0) or 0):
         lines.append(f"  select_count: {row_value(row, 'select_count', 0)}")
+    photo_subjects, photo_cohorts = photo_metadata_from_row(row)
+    if photo_subjects:
+        lines.extend(["", "Photo Subjects:"])
+        lines.extend(f"  - {name}" for name in photo_subjects)
+    if photo_cohorts:
+        lines.extend(["", "Photo Cohorts:"])
+        for item in photo_cohorts:
+            project_ids = [
+                str(link.get("project_id", ""))
+                for link in item.get("project_links", [])
+                if link.get("project_id")
+            ]
+            projects = f", projects: {', '.join(project_ids)}" if project_ids else ""
+            lines.append(
+                f"  - {item.get('cohort_id', '')}: "
+                f"{item.get('file_count', 0)} files, {item.get('status', '')}{projects}"
+            )
     lines.extend(["", "Route:"])
     if row_value(row, "route_status", ""):
         lines.append(f"  route_status: {row_value(row, 'route_status', '')}")
@@ -1767,6 +1940,11 @@ def registry_lifecycle(row, packet: Path, route: Optional[dict] = None) -> str:
             lines.append(f"  promotion_note: {route.get('promotion_note', '')}")
     else:
         lines.append("  none")
+    if row_value(row, "project_link_count", 0):
+        lines.extend(["", "Linked Projects:"])
+        for project_id in str(row_value(row, "project_ids", "")).split(","):
+            if project_id:
+                lines.append(f"  - {project_id}")
     lines.extend(["", "Timeline:"])
     events = timeline_events(row, route)
     if events:
@@ -1790,6 +1968,20 @@ def lifecycle_section(values: dict) -> dict:
     return {key: value for key, value in values.items() if value not in ("", None)}
 
 
+def photo_metadata_from_row(row) -> tuple[list, list]:
+    def decode(key):
+        value = row_value(row, key, "[]")
+        if isinstance(value, list):
+            return value
+        try:
+            decoded = json.loads(value or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return decoded if isinstance(decoded, list) else []
+
+    return decode("photo_subjects"), decode("photo_cohorts")
+
+
 def lifecycle_report_data(row, packet: Path, generated_at: Optional[str] = None, route: Optional[dict] = None) -> dict:
     route = route if route is not None else read_routing(packet)
     generated_at = generated_at or utc_now()
@@ -1807,6 +1999,7 @@ def lifecycle_report_data(row, packet: Path, generated_at: Optional[str] = None,
     }
     if checksum_count is not None:
         verification["checksum_count"] = checksum_count
+    photo_subjects, photo_cohorts = photo_metadata_from_row(row)
     return {
         "report_type": "laia.packet_lifecycle",
         "report_version": "0.1",
@@ -1833,6 +2026,14 @@ def lifecycle_report_data(row, packet: Path, generated_at: Optional[str] = None,
                 "final_status": row_value(row, "final_status", ""),
                 "failure_status": row_value(row, "failure_status", ""),
                 "select_count": row_value(row, "select_count", 0) if int(row_value(row, "select_count", 0) or 0) else "",
+            }
+        ),
+        "photo": lifecycle_section(
+            {
+                "subject_count": len(photo_subjects) if photo_subjects else "",
+                "subjects": photo_subjects if photo_subjects else "",
+                "cohort_count": len(photo_cohorts) if photo_cohorts else "",
+                "cohorts": photo_cohorts if photo_cohorts else "",
             }
         ),
         "route": lifecycle_section(
@@ -2029,6 +2230,34 @@ def print_packet_record(row):
     print(f"Select Count:        {row['select_count']}")
     print(f"Verification Status: {row['verification_status']}")
     print(f"Missing Required:    {row['missing_required_items']}")
+    if "project_link_count" in row.keys() and int(row_value(row, "project_link_count", 0) or 0):
+        project_ids = row_value(row, "project_ids", "")
+        print(f"Linked Projects:     {row_value(row, 'project_link_count', 0)} {project_ids}")
+    photo_subjects, photo_cohorts = photo_metadata_from_row(row)
+    if row_value(row, "packet_type", "") == "laia.photo_ingest":
+        print()
+        print("Photo Subjects:")
+        if photo_subjects:
+            for name in photo_subjects:
+                print(f"  {name}")
+        else:
+            print("  none")
+        print()
+        print("Photo Cohorts:")
+        if photo_cohorts:
+            for item in photo_cohorts:
+                project_ids = [
+                    str(link.get("project_id", ""))
+                    for link in item.get("project_links", [])
+                    if link.get("project_id")
+                ]
+                projects = f", projects: {', '.join(project_ids)}" if project_ids else ""
+                print(
+                    f"  {item.get('cohort_id', '')}: "
+                    f"{item.get('file_count', 0)} files, {item.get('status', '')}{projects}"
+                )
+        else:
+            print("  none")
 
 
 def grouped_counts(rows, key: str):
@@ -2623,6 +2852,111 @@ def command_packets_promotion_history(args):
             print(f"   note: {event.get('note')}")
 
 
+def command_packets_link_project(args):
+    cfg = config_from_env()
+    try:
+        row, packet = route_row_for_identifier(args.identifier, cfg.db_path)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+    project_name = getattr(args, "project", None)
+    if not project_name:
+        raise SystemExit("Missing --project NAME")
+    project_type = getattr(args, "type", "project") or "project"
+    artifact = getattr(args, "artifact", None)
+    note = getattr(args, "note", "") or ""
+    # use promotion_output_path if artifact not provided
+    if not artifact:
+        artifact = row_value(row, "promotion_output_path", "") or None
+
+    try:
+        from projects import registry as projects_registry
+    except ImportError:
+        from core.projects import registry as projects_registry
+
+    # ensure project record
+    record = projects_registry.ensure_project_record(project_name, project_type)
+    project_id = record.get("project_id")
+    linked_at = utc_now()
+
+    # add packet entry
+    packet_info = {
+        "job_id": row_value(row, "job_id", ""),
+        "packet_type": row_value(row, "packet_type", ""),
+        "packet_path": row_value(row, "packet_path", ""),
+    }
+    projects_registry.add_packet_to_project(project_id, packet_info, linked_at)
+
+    # add artifact entry if provided
+    if artifact:
+        projects_registry.add_artifact_to_project(project_id, artifact, packet_info["job_id"], linked_at)
+
+    # add packet-side link
+    entry = packet_project_link_entry(packet, project_id, record.get("name", project_name), project_type, projects_registry.project_folder(project_id), artifact, linked_at)
+    upsert_packet_project_link(packet, entry)
+
+    # sync registry to update sidecar counts
+    sync_packet_registry_record(packet, cfg.db_path)
+
+    print(f"Linked packet {packet_info['job_id']} -> project {project_id}")
+
+
+def command_packets_unlink_project(args):
+    cfg = config_from_env()
+    try:
+        row, packet = route_row_for_identifier(args.identifier, cfg.db_path)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+    project_name = getattr(args, "project", None)
+    if not project_name:
+        raise SystemExit("Missing --project NAME")
+
+    try:
+        from projects import registry as projects_registry
+    except ImportError:
+        from core.projects import registry as projects_registry
+
+    try:
+        project_id = projects_registry.find_project(project_name)
+    except FileNotFoundError:
+        raise SystemExit(f"Project not found: {project_name}")
+
+    job_id = row_value(row, "job_id", "")
+    removed = projects_registry.remove_packet_from_project(project_id, job_id)
+    sidecar_removed = remove_packet_project_link(Path(row_value(row, "packet_path", "")), project_id)
+    # sync registry
+    sync_packet_registry_record(Path(row_value(row, "packet_path", "")), cfg.db_path)
+
+    if removed or sidecar_removed:
+        print(f"Unlinked packet {job_id} from project {project_id}")
+    else:
+        print(f"No link found for packet {job_id} in project {project_id}")
+
+
+def command_packets_project_links(args):
+    cfg = config_from_env()
+    try:
+        row = resolve_packet_or_direct(args.identifier, cfg.db_path)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+    packet_path = row_value(row, "packet_path", args.identifier)
+    links = read_project_links(Path(packet_path)).get("links", [])
+    if not links:
+        print("No project links found.")
+        return
+    table = [
+        (
+            link.get("project_id", ""),
+            link.get("project_name", ""),
+            link.get("project_type", ""),
+            link.get("link_role", ""),
+            link.get("artifact_path", ""),
+            link.get("linked_at", ""),
+        )
+        for link in links
+    ]
+    print_rows(["project_id", "project_name", "project_type", "link_role", "artifact_path", "linked_at"], table)
+
+
 def register_packets_subcommands(sub):
     packets_p = sub.add_parser("packets", help="Packet registry commands")
     packets_sub = packets_p.add_subparsers(dest="packets_command")
@@ -2788,3 +3122,20 @@ def register_packets_subcommands(sub):
     promotion_history_p = packets_sub.add_parser("promotion-history", help="Show packet promotion history")
     promotion_history_p.add_argument("identifier")
     promotion_history_p.set_defaults(func=command_packets_promotion_history)
+
+    link_project_p = packets_sub.add_parser("link-project", help="Link a packet to a project record")
+    link_project_p.add_argument("identifier")
+    link_project_p.add_argument("--project", required=True)
+    link_project_p.add_argument("--type", default="project", choices=["project", "publication"])
+    link_project_p.add_argument("--artifact", default=None)
+    link_project_p.add_argument("--note", default="")
+    link_project_p.set_defaults(func=command_packets_link_project)
+
+    unlink_project_p = packets_sub.add_parser("unlink-project", help="Unlink a packet from a project record")
+    unlink_project_p.add_argument("identifier")
+    unlink_project_p.add_argument("--project", required=True)
+    unlink_project_p.set_defaults(func=command_packets_unlink_project)
+
+    project_links_p = packets_sub.add_parser("project-links", help="Show packet project links")
+    project_links_p.add_argument("identifier")
+    project_links_p.set_defaults(func=command_packets_project_links)
