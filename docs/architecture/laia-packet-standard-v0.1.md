@@ -81,7 +81,7 @@ Optional folders must be additive. A cataloger or verifier should still be able 
 
 Required common fields:
 
-- `packet_type`: Stable packet family identifier, such as `laia.photo_ingest` or `laia.ingest.scan`.
+- `packet_type`: Stable packet family identifier, such as `laia.photo_ingest`, `laia.paper_ingest`, `laia.video_ingest`, or `laia.ingest.scan`.
 - `packet_version`: Packet format version for the family.
 - `job_id` or `packet_id`: Stable packet identifier unique within its packet family.
 - `source`: Human-readable source location or source description.

@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import uuid
 from datetime import datetime
@@ -56,6 +57,7 @@ PROJECT_JSON = "project.json"
 PROJECT_PACKETS_JSON = "packets.json"
 PROJECT_ARTIFACTS_JSON = "artifacts.json"
 PROJECT_COHORTS_JSON = "cohorts.json"
+PROJECT_VIDEO_EVIDENCE_JSON = "video_evidence.json"
 PROJECT_MARKDOWN = "project.md"
 PROJECT_NOTES_JSON = "notes.json"
 PROJECT_NOTES_MARKDOWN = "notes.md"
@@ -78,6 +80,11 @@ ACTION_TYPES = {
     "task_log",
     "checklist_complete",
     "receipt_reconcile",
+    "photo_edit_prepare",
+    "photo_edit_add_source",
+    "photo_edit_scan_exports",
+    "photo_edit_verify",
+    "photo_edit_package",
 }
 ACTION_STATUSES = {"none", "configured", "dry_run", "executed", "partial", "failed", "blocked"}
 
@@ -118,6 +125,10 @@ def project_artifacts_path(project_id: str) -> Path:
 
 def project_cohorts_path(project_id: str) -> Path:
     return project_folder(project_id) / PROJECT_COHORTS_JSON
+
+
+def project_video_evidence_path(project_id: str) -> Path:
+    return project_folder(project_id) / PROJECT_VIDEO_EVIDENCE_JSON
 
 
 def project_markdown_path(project_id: str) -> Path:
@@ -236,6 +247,15 @@ def load_project_cohorts(project_id: str) -> dict:
         data = {"project_id": project_id, "cohorts": []}
     data.setdefault("project_id", project_id)
     data.setdefault("cohorts", [])
+    return data
+
+
+def load_project_video_evidence(project_id: str) -> dict:
+    data = load_json(project_video_evidence_path(project_id))
+    if not data:
+        data = {"project_id": project_id, "videos": []}
+    data.setdefault("project_id", project_id)
+    data.setdefault("videos", [])
     return data
 
 
@@ -1087,6 +1107,11 @@ def validate_action(action_type: str, parameters: dict) -> dict:
         "task_log": ["text"],
         "checklist_complete": ["target_item_id"],
         "receipt_reconcile": ["project", "packet_ids"],
+        "photo_edit_prepare": ["project"],
+        "photo_edit_add_source": ["project", "packet", "cohort"],
+        "photo_edit_scan_exports": ["project"],
+        "photo_edit_verify": ["project"],
+        "photo_edit_package": ["project"],
     }.get(action_type, [])
     for key in required:
         if key not in parameters or parameters[key] in ("", None, []):
@@ -1334,6 +1359,8 @@ def dry_run_action_plan(action_type: str, parameters: dict) -> dict:
         details = [{"operation": "checklist_complete", "target": parameters.get("target_item_id", "")}]
     elif action_type == "receipt_reconcile":
         details = [{"operation": "receipt_reconcile", "target": packet_id, "project": parameters.get("project", "")} for packet_id in parameters.get("packet_ids", [])]
+    elif action_type in {"photo_edit_prepare", "photo_edit_add_source", "photo_edit_scan_exports", "photo_edit_verify", "photo_edit_package"}:
+        details = [{"operation": action_type, "project": parameters.get("project", "")}]
     elif action_type == "manual":
         details = [{"operation": "manual"}]
     return action_result("dry_run", action_type, f"Dry run for {action_type}.", details)
@@ -1443,6 +1470,39 @@ def execute_action_impl(action_type: str, parameters: dict, task_identifier: str
         else:
             summary = f"Receipt reconciliation report created with {len(report.get('warnings', []))} warnings."
         return action_result(status, action_type, summary, details, started_at)
+    if action_type in {"photo_edit_prepare", "photo_edit_add_source", "photo_edit_scan_exports", "photo_edit_verify", "photo_edit_package"}:
+        try:
+            from projects import sale_items
+        except (ImportError, ModuleNotFoundError):
+            from core.projects import sale_items
+        target = parameters["project"]
+        if action_type == "photo_edit_prepare":
+            result = sale_items.prepare_photo_edit(
+                target,
+                cohort=parameters.get("cohort"),
+                copy_mode=parameters.get("copy_mode", "copy"),
+            )
+            detail = {"workspace": result["manifest"]["workspace_path"], "copied": result["copied"]}
+        elif action_type == "photo_edit_add_source":
+            result = sale_items.add_photo_edit_source(
+                target,
+                packet=parameters["packet"],
+                cohort=parameters["cohort"],
+                copy_mode=parameters.get("copy_mode", "copy"),
+            )
+            detail = result
+        elif action_type == "photo_edit_scan_exports":
+            result = sale_items.scan_exports(target)
+            detail = result
+        elif action_type == "photo_edit_verify":
+            result = sale_items.verify_photo_edit(target)
+            detail = result
+            if not result["success"]:
+                return action_result("failed", action_type, "Photo edit verification failed.", [detail], started_at)
+        else:
+            result = sale_items.package_photos(target)
+            detail = result
+        return action_result("executed", action_type, f"Executed {action_type}.", [detail], started_at)
     return action_result("failed", action_type, f"Unsupported action type: {action_type}.", started_at=started_at)
 
 
@@ -2059,6 +2119,29 @@ def project_cohorts(project_id: str) -> List[dict]:
     return load_project_cohorts(project_id).get("cohorts", [])
 
 
+def project_video_evidence(project_id: str) -> List[dict]:
+    return load_project_video_evidence(project_id).get("videos", [])
+
+
+def add_video_evidence(project_id: str, video: dict) -> dict:
+    data = load_project_video_evidence(project_id)
+    existing = next(
+        (
+            item for item in data["videos"]
+            if item.get("packet_id") == video.get("packet_id") and item.get("role") == video.get("role")
+        ),
+        None,
+    )
+    if existing is None:
+        data["videos"].append(video)
+        result = video
+    else:
+        existing.update(video)
+        result = existing
+    write_json(project_video_evidence_path(project_id), data)
+    return result
+
+
 def add_cohort_to_project(project_id: str, cohort: dict) -> dict:
     cohorts_doc = load_project_cohorts(project_id)
     cohorts = cohorts_doc.get("cohorts", [])
@@ -2168,7 +2251,7 @@ def project_record_summary(project_id: str) -> dict:
 def registry_rows_by_job_id() -> Dict[str, Any]:
     try:
         rows = load_registry_rows(config_from_env().db_path)
-    except FileNotFoundError:
+    except (FileNotFoundError, sqlite3.Error):
         return {}
     return {str(row_value(row, "job_id", "")): row for row in rows}
 
@@ -2385,6 +2468,7 @@ def project_briefing_data(identifier: str) -> dict:
     packets = project_packets(project_id)
     artifacts = project_artifacts(project_id)
     cohorts = project_cohorts(project_id)
+    videos = project_video_evidence(project_id)
     rows_by_job_id = registry_rows_by_job_id()
     packet_entries = [packet_briefing_entry(packet, rows_by_job_id.get(str(packet.get("job_id", "")))) for packet in packets]
     artifact_entries = [artifact_status(artifact) for artifact in artifacts]
@@ -2423,11 +2507,38 @@ def project_briefing_data(identifier: str) -> dict:
                 }
             )
     activity = sorted([item for item in activity if item.get("timestamp")], key=lambda item: item["timestamp"], reverse=True)
+    try:
+        from projects.sale_items import sale_briefing
+    except (ImportError, ModuleNotFoundError):
+        from core.projects.sale_items import sale_briefing
+    sale_data = sale_briefing(project_id)
+    specific_suggestions = sale_data.get("suggestions", [])
+    generic_suggestions = project_suggestions(record, packet_entries, artifact_entries, health, cohort_entries)
+    if sale_data.get("sale_item"):
+        generic_suggestions = [
+            value
+            for value in generic_suggestions
+            if value
+            not in {
+                "Review or continue work in promoted artifact.",
+                "Continue project work or link additional source packets.",
+                "Project has no open tasks; add work or mark project complete.",
+            }
+            and not value.startswith("Review or continue work with the ")
+        ]
     return {
         "project": record,
         "packets": packet_entries,
         "artifacts": artifact_entries,
         "cohorts": cohort_entries,
+        "video_evidence": [
+            {
+                **video,
+                "original_exists": Path(video.get("original_path", "")).is_file(),
+                "proxy_exists": Path(video.get("proxy_path", "")).is_file(),
+            }
+            for video in videos
+        ],
         "notes": {
             "active_count": len(active_notes),
             "latest": latest_notes,
@@ -2441,8 +2552,14 @@ def project_briefing_data(identifier: str) -> dict:
             "latest_completed_task": latest_completed[0] if latest_completed else None,
         },
         "health": health,
+        "sale_item": sale_data.get("sale_item", {}),
+        "listings": sale_data.get("listings", []),
+        "offers": sale_data.get("offers", []),
+        "photo_edit": sale_data.get("photo_edit", {}),
         "recent_activity": activity[:8],
-        "suggested_actions": project_suggestions(record, packet_entries, artifact_entries, health, cohort_entries),
+        "suggested_actions": specific_suggestions + [
+            value for value in generic_suggestions if value not in specific_suggestions
+        ],
     }
 
 
@@ -2870,6 +2987,113 @@ def print_project_briefing(data: dict) -> None:
     print(f"  health: {data.get('health', '')}")
     if record.get("notes"):
         print(f"  notes: {record.get('notes', '')}")
+    print()
+    sale_item = data.get("sale_item", {})
+    print("Sale Item:")
+    if sale_item:
+        print(f"  {sale_item.get('title', '')}")
+        print(f"  condition: {sale_item.get('condition', {}).get('overall', '')}")
+        print(f"  functional: {sale_item.get('condition', {}).get('functional', '')}")
+        print(f"  sale status: {sale_item.get('sale', {}).get('status', '')}")
+    else:
+        print("  none")
+    print()
+    print("Sales Channels:")
+    listings = data.get("listings", [])
+    if listings:
+        for listing in listings:
+            price = listing.get("asking_price")
+            price_text = f" at ${price}" if price else ""
+            print(f"  {listing.get('channel_name', listing.get('channel', ''))}: {listing.get('status', '')}{price_text}")
+    else:
+        print("  none")
+    print()
+    print("Offers:")
+    offers = data.get("offers", [])
+    if offers:
+        for offer in offers:
+            note = f" — {offer.get('note', '')}" if offer.get("note") else ""
+            print(f"  ${offer.get('amount', '')} {offer.get('status', '')}{note}")
+    else:
+        print("  none")
+    print()
+    photo_edit = data.get("photo_edit", {})
+    print("Photo Editing:")
+    if photo_edit:
+        source_ids = {
+            source.get("source_id") for source in photo_edit.get("sources", [])[1:] if source.get("source_id")
+        }
+        heroes = [
+            image for image in photo_edit.get("images", [])
+            if image.get("role") == "hero" and image.get("review_status") == "approved"
+        ]
+        print(f"  sources: {len(photo_edit.get('sources', []))}")
+        print(f"  workspace images: {photo_edit.get('image_count', 0)}")
+        print(f"  XMP sidecars: {photo_edit.get('edited_count', 0)}")
+        print(f"  rendered exports: {photo_edit.get('exported_count', 0)}")
+        print(f"  approved: {photo_edit.get('approved_count', 0)}")
+        print(
+            "  new/unreviewed: "
+            + str(
+                sum(
+                    1
+                    for image in photo_edit.get("images", [])
+                    if image.get("source_id") in source_ids and image.get("review_status") == "unreviewed"
+                )
+            )
+        )
+        print(f"  hero image: {'approved' if heroes else 'missing'}")
+        approved_roles = {
+            image.get("role")
+            for image in photo_edit.get("images", [])
+            if image.get("review_status") == "approved"
+        }
+        missing_coverage = [role for role in ["rear", "ports"] if role not in approved_roles]
+        print(f"  verification: {photo_edit.get('status', '').replace('_', ' ')}")
+        print(f"  missing coverage: {', '.join(missing_coverage) if missing_coverage else 'none'}")
+    else:
+        print("  none")
+    print()
+    print("Photo Evidence:")
+    if photo_edit:
+        approved_images = [
+            image for image in photo_edit.get("images", [])
+            if image.get("review_status") == "approved"
+        ]
+        role_counts = {}
+        tag_counts = {}
+        for image in approved_images:
+            role = image.get("role")
+            if role:
+                role_counts[role] = role_counts.get(role, 0) + 1
+            for tag in image.get("tags", []) or []:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        print(f"  Approved photos: {len(approved_images)}")
+        print("  Roles:")
+        if role_counts:
+            for role, count in sorted(role_counts.items()):
+                print(f"    {role}: {count}")
+        else:
+            print("    none")
+        print("  Tags:")
+        if tag_counts:
+            for tag, count in sorted(tag_counts.items()):
+                print(f"    {tag}: {count}")
+        else:
+            print("    none")
+    else:
+        print("  none")
+    print()
+    print("Video Evidence:")
+    if data.get("video_evidence"):
+        for video in data["video_evidence"]:
+            print(f"  {video.get('role', '')}")
+            print(f"    duration: {float(video.get('duration_seconds', 0)):.1f} seconds")
+            print(f"    original: {'exists' if video.get('original_exists') else 'missing'}")
+            print(f"    proxy: {'exists' if video.get('proxy_exists') else 'missing'}")
+            print(f"    verification: {video.get('verification_status', '')}")
+    else:
+        print("  none")
     print()
     print("Packet Health:")
     if data["packets"]:
@@ -3895,6 +4119,11 @@ def command_projects_task_link_artifact(args):
 def register_projects_subcommands(sub):
     projects_p = sub.add_parser("projects", help="Project registry commands")
     projects_sub = projects_p.add_subparsers(dest="projects_command")
+    try:
+        from projects.sale_items import register_sale_item_subcommands
+    except (ImportError, ModuleNotFoundError):
+        from core.projects.sale_items import register_sale_item_subcommands
+    register_sale_item_subcommands(projects_sub)
 
     projects_sub.add_parser("list", help="List project records").set_defaults(func=command_projects_list)
 
