@@ -56,6 +56,16 @@ def display_missing(value: Optional[str]) -> str:
     return str(value) if value not in (None, "") else "missing"
 
 
+def display_unknown(value) -> str:
+    if value is None or value == "":
+        return "unknown"
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return str(value)
+
+
 def appraisal_root(project_id: str) -> Path:
     return registry_module().project_folder(project_id) / "appraisal"
 
@@ -74,6 +84,14 @@ def research_path(project_id: str) -> Path:
 
 def research_markdown_path(project_id: str) -> Path:
     return appraisal_root(project_id) / "research.md"
+
+
+def condition_path(project_id: str) -> Path:
+    return appraisal_root(project_id) / "condition.json"
+
+
+def condition_markdown_path(project_id: str) -> Path:
+    return appraisal_root(project_id) / "condition.md"
 
 
 def listing_draft_context_path(project_id: str) -> Path:
@@ -129,6 +147,279 @@ def role_coverage(photo_edit: dict, roles: list[str]) -> dict:
 
 def approved_photo_count(photo_edit: dict) -> int:
     return sum(1 for image in photo_edit.get("images", []) if image.get("review_status") == "approved")
+
+
+def condition_bool(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "y", "1", "on"}:
+        return True
+    if text in {"false", "no", "n", "0", "off"}:
+        return False
+    if text == "unknown":
+        return None
+    raise ValueError(f"Invalid boolean value: {value}")
+
+
+def default_bool_from_note(note: str, keyword: str) -> Optional[bool]:
+    return True if keyword.lower() in str(note or "").lower() else None
+
+
+def record_condition_confidence(grading: dict) -> str:
+    if grading.get("media_condition") and grading.get("sleeve_condition") and grading.get("overall_condition") != "unassessed":
+        return "medium"
+    return "low"
+
+
+def record_condition_safe_disclosure(grading: dict) -> list[str]:
+    disclosure = []
+    if grading.get("visual_grade_only"):
+        disclosure.append("Visual grade only.")
+    if not grading.get("playback_tested"):
+        disclosure.append("Playback not tested.")
+    disclosure.append("See photos for sleeve condition.")
+    return disclosure
+
+
+def record_condition_risks(grading: dict) -> list[str]:
+    risks = []
+    if not grading.get("media_condition"):
+        risks.append("Media condition has not been graded.")
+    if not grading.get("sleeve_condition"):
+        risks.append("Sleeve condition has not been graded.")
+    if not grading.get("playback_tested"):
+        risks.append("Playback quality is unknown.")
+    return risks
+
+
+def record_condition_next_steps(grading: dict) -> list[dict]:
+    steps = []
+    if not grading.get("media_condition"):
+        steps.append({"priority": "high", "task": "Inspect vinyl surface and assign media condition."})
+    if not grading.get("sleeve_condition"):
+        steps.append({"priority": "high", "task": "Inspect sleeve and assign sleeve condition."})
+    steps.append({"priority": "medium", "task": "Capture label/vinyl photos if collector pricing matters."})
+    return steps
+
+
+def build_record_condition_capture(project_id_or_identifier: str) -> dict:
+    registry = registry_module()
+    project_id = registry.find_project(project_id_or_identifier)
+    item = load_optional_sale_item(project_id)
+    metadata = item.get("record_metadata", {})
+    identity = {
+        "artist": blank_to_none(metadata.get("artist") or item.get("artist")),
+        "title": blank_to_none(metadata.get("title") or item.get("title")),
+        "label": blank_to_none(metadata.get("record_label") or item.get("manufacturer")),
+        "catalog_number": blank_to_none(metadata.get("catalog_number") or item.get("model")),
+    }
+    note = metadata.get("grading_note", "")
+    grading = {
+        "media_condition": blank_to_none(metadata.get("media_condition")),
+        "sleeve_condition": blank_to_none(metadata.get("sleeve_condition")),
+        "overall_condition": item.get("condition", {}).get("overall") or "unassessed",
+        "grading_standard": metadata.get("grading_standard") or "visual",
+        "playback_tested": bool(metadata.get("play_tested")),
+        "visual_grade_only": metadata.get("visual_grade_only")
+        if "visual_grade_only" in metadata
+        else not bool(metadata.get("play_tested")),
+        "confidence": "low",
+        "grading_note": blank_to_none(note),
+    }
+    grading["confidence"] = metadata.get("grading_confidence") or record_condition_confidence(grading)
+    media_observations = {
+        "scratches": blank_to_none(metadata.get("scratches")),
+        "scuffs": blank_to_none(metadata.get("scuffs")),
+        "warping": blank_to_none(metadata.get("warping")),
+        "dust": blank_to_none(metadata.get("dust")),
+        "fingerprints": blank_to_none(metadata.get("fingerprints")),
+        "label_condition": blank_to_none(metadata.get("label_condition")),
+        "notes": metadata.get("media_notes", []),
+    }
+    sleeve_observations = {
+        "ring_wear": blank_to_none(metadata.get("ring_wear")),
+        "shelf_wear": blank_to_none(metadata.get("shelf_wear")),
+        "corner_wear": blank_to_none(metadata.get("corner_wear")),
+        "edge_wear": blank_to_none(metadata.get("edge_wear")),
+        "seam_split": blank_to_none(metadata.get("seam_split")),
+        "spine_readable": metadata.get("spine_readable")
+        if "spine_readable" in metadata
+        else default_bool_from_note(note, "spine reads"),
+        "writing": blank_to_none(metadata.get("writing")),
+        "stickers": blank_to_none(metadata.get("stickers")),
+        "water_damage": blank_to_none(metadata.get("water_damage")),
+        "notes": metadata.get("sleeve_notes", []),
+    }
+    included_materials = {
+        "poly_sleeve": metadata.get("poly_sleeve")
+        if "poly_sleeve" in metadata
+        else default_bool_from_note(note, "poly record sleeve"),
+        "inner_sleeve": metadata.get("inner_sleeve"),
+        "insert": metadata.get("insert"),
+        "poster": metadata.get("poster"),
+        "other": metadata.get("other_materials", []),
+    }
+    return {
+        "project": project_id,
+        "category": item.get("category", ""),
+        "profile": "records" if item.get("category") == "records" else "generic",
+        "identity": {
+            "artist": identity.get("artist"),
+            "title": identity.get("title"),
+            "label": identity.get("label"),
+            "catalog_number": identity.get("catalog_number"),
+        },
+        "grading": grading,
+        "media_observations": media_observations,
+        "sleeve_observations": sleeve_observations,
+        "included_materials": included_materials,
+        "safe_disclosure": record_condition_safe_disclosure(grading),
+        "condition_risks": record_condition_risks(grading),
+        "next_steps": record_condition_next_steps(grading),
+        "generated_at": registry.utc_now(),
+    }
+
+
+def read_record_condition(project_id_or_identifier: str) -> dict:
+    return build_record_condition_capture(project_id_or_identifier)
+
+
+def write_record_condition(project_id_or_identifier: str, condition: Optional[dict] = None) -> dict:
+    registry = registry_module()
+    project_id = registry.find_project(project_id_or_identifier)
+    condition = condition or read_record_condition(project_id)
+    condition["generated_at"] = registry.utc_now()
+    root = appraisal_root(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    json_path = condition_path(project_id)
+    md_path = condition_markdown_path(project_id)
+    registry.write_json(json_path, condition)
+    md_path.write_text(render_record_condition_markdown(condition), encoding="utf-8")
+    return {"json": str(json_path), "md": str(md_path)}
+
+
+def record_condition_with_paths(project_id_or_identifier: str) -> tuple[dict, dict]:
+    condition = read_record_condition(project_id_or_identifier)
+    paths = write_record_condition(project_id_or_identifier, condition)
+    return condition, paths
+
+
+def record_condition_update(project_id_or_identifier: str, **values) -> tuple[dict, dict]:
+    registry = registry_module()
+    sale_items = sale_items_module()
+    project_id = registry.find_project(project_id_or_identifier)
+    item = sale_items.load_sale_item(project_id)
+    metadata = item.setdefault("record_metadata", {})
+    item["category"] = item.get("category") or "records"
+    item.setdefault("condition", {})["functional"] = "not_applicable"
+    if values.get("condition") is not None:
+        item["condition"]["overall"] = values["condition"]
+    direct_fields = {
+        "media_condition": "media_condition",
+        "sleeve_condition": "sleeve_condition",
+        "grading_standard": "grading_standard",
+        "grading_note": "grading_note",
+        "scratches": "scratches",
+        "scuffs": "scuffs",
+        "warping": "warping",
+        "dust": "dust",
+        "fingerprints": "fingerprints",
+        "label_condition": "label_condition",
+        "ring_wear": "ring_wear",
+        "shelf_wear": "shelf_wear",
+        "corner_wear": "corner_wear",
+        "edge_wear": "edge_wear",
+        "seam_split": "seam_split",
+        "writing": "writing",
+        "stickers": "stickers",
+        "water_damage": "water_damage",
+        "inner_sleeve": "inner_sleeve",
+        "insert": "insert",
+        "poster": "poster",
+    }
+    for update_key, metadata_key in direct_fields.items():
+        if values.get(update_key) is not None:
+            metadata[metadata_key] = values[update_key]
+    for key in ["playback_tested", "visual_grade_only", "spine_readable", "poly_sleeve"]:
+        if values.get(key) is not None:
+            metadata["play_tested" if key == "playback_tested" else key] = condition_bool(values[key])
+    if values.get("note"):
+        metadata.setdefault("condition_notes", []).append(values["note"])
+    sale_items.write_sale_item(project_id, item)
+    condition = build_record_condition_capture(project_id)
+    paths = write_record_condition(project_id, condition)
+    return condition, paths
+
+
+def render_record_condition_markdown(condition: dict) -> str:
+    identity = condition.get("identity", {})
+    grading = condition.get("grading", {})
+    sleeve = condition.get("sleeve_observations", {})
+    media = condition.get("media_observations", {})
+    included = condition.get("included_materials", {})
+    high_steps = [step["task"] for step in condition.get("next_steps", []) if step.get("priority") == "high"]
+    medium_steps = [step["task"] for step in condition.get("next_steps", []) if step.get("priority") == "medium"]
+    label_line = " ".join(value for value in [identity.get("label"), identity.get("catalog_number")] if value)
+    lines = [
+        f"# Record Condition: {condition.get('project', '')}",
+        "",
+        "## Item",
+        "",
+        f"{identity.get('artist') or '-'} - {identity.get('title') or '-'}  ",
+        label_line or "-",
+        "",
+        "## Grading",
+        "",
+        f"Media condition: {display_missing(grading.get('media_condition'))}  ",
+        f"Sleeve condition: {display_missing(grading.get('sleeve_condition'))}  ",
+        f"Overall condition: {grading.get('overall_condition', 'unassessed')}  ",
+        f"Grading standard: {grading.get('grading_standard', 'visual')}  ",
+        f"Playback tested: {'yes' if grading.get('playback_tested') else 'no'}  ",
+        f"Visual grade only: {'yes' if grading.get('visual_grade_only') else 'no'}  ",
+        f"Confidence: {grading.get('confidence', 'low')}",
+        "",
+        "## Sleeve observations",
+        "",
+        f"- Poly sleeve: {display_unknown(included.get('poly_sleeve'))}",
+        f"- Spine readable: {display_unknown(sleeve.get('spine_readable'))}",
+        f"- Ring wear: {display_unknown(sleeve.get('ring_wear'))}",
+        f"- Shelf wear: {display_unknown(sleeve.get('shelf_wear'))}",
+        f"- Corner wear: {display_unknown(sleeve.get('corner_wear'))}",
+        f"- Seam split: {display_unknown(sleeve.get('seam_split'))}",
+        f"- Writing: {display_unknown(sleeve.get('writing'))}",
+        f"- Stickers: {display_unknown(sleeve.get('stickers'))}",
+        f"- Water damage: {display_unknown(sleeve.get('water_damage'))}",
+        "",
+        "## Media observations",
+        "",
+        f"- Scratches: {display_unknown(media.get('scratches'))}",
+        f"- Scuffs: {display_unknown(media.get('scuffs'))}",
+        f"- Warping: {display_unknown(media.get('warping'))}",
+        f"- Dust: {display_unknown(media.get('dust'))}",
+        f"- Fingerprints: {display_unknown(media.get('fingerprints'))}",
+        f"- Label condition: {display_unknown(media.get('label_condition'))}",
+        "",
+        "## Disclosure language",
+        *(f"- {item}" for item in condition.get("safe_disclosure", [])),
+        "",
+        "## Condition risks",
+        *(f"- {item}" for item in condition.get("condition_risks", [])),
+        "",
+        "## Next steps",
+        "",
+        "High:",
+        *(f"- {task}" for task in high_steps),
+        *(["- none"] if not high_steps else []),
+        "",
+        "Medium:",
+        *(f"- {task}" for task in medium_steps),
+        *(["- none"] if not medium_steps else []),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def record_listing_readiness(item: dict, coverage: dict) -> dict:
@@ -235,6 +526,11 @@ def record_next_steps(identity: dict, condition: dict, item: dict, coverage: dic
 
 def build_record_appraisal_context(project: dict, sale_item: dict, photo_edit: dict) -> dict:
     metadata = sale_item.get("record_metadata", {})
+    captured_condition = {}
+    condition_file = condition_path(project.get("project_id", ""))
+    if condition_file.is_file():
+        captured_condition = json.loads(condition_file.read_text(encoding="utf-8"))
+    captured_grading = captured_condition.get("grading", {})
     identity = {
         "artist": blank_to_none(metadata.get("artist") or sale_item.get("artist")),
         "title": blank_to_none(metadata.get("title") or sale_item.get("title")),
@@ -247,14 +543,14 @@ def build_record_appraisal_context(project: dict, sale_item: dict, photo_edit: d
     condition = {
         "condition": blank_to_none(
             None
-            if sale_item.get("condition", {}).get("overall") == "unassessed"
-            else sale_item.get("condition", {}).get("overall")
+            if (captured_grading.get("overall_condition") or sale_item.get("condition", {}).get("overall")) == "unassessed"
+            else (captured_grading.get("overall_condition") or sale_item.get("condition", {}).get("overall"))
         ),
-        "media_condition": blank_to_none(metadata.get("media_condition")),
-        "sleeve_condition": blank_to_none(metadata.get("sleeve_condition")),
-        "grading_note": blank_to_none(metadata.get("grading_note")),
-        "play_tested": bool(metadata.get("play_tested")),
-        "visual_grade_only": not bool(metadata.get("play_tested")),
+        "media_condition": blank_to_none(captured_grading.get("media_condition") or metadata.get("media_condition")),
+        "sleeve_condition": blank_to_none(captured_grading.get("sleeve_condition") or metadata.get("sleeve_condition")),
+        "grading_note": blank_to_none(captured_grading.get("grading_note") or metadata.get("grading_note")),
+        "play_tested": bool(captured_grading.get("playback_tested") or metadata.get("play_tested")),
+        "visual_grade_only": bool(captured_grading.get("visual_grade_only", not bool(metadata.get("play_tested")))),
     }
     readiness = record_listing_readiness(sale_item, coverage)
     known_claims = record_known_claims(identity, coverage)
@@ -1334,6 +1630,57 @@ def print_listing_draft_summary(draft: dict, paths: dict) -> None:
     print(f"  {paths['md']}")
 
 
+def print_record_condition_summary(condition: dict, paths: dict) -> None:
+    identity = condition.get("identity", {})
+    grading = condition.get("grading", {})
+    sleeve = condition.get("sleeve_observations", {})
+    media = condition.get("media_observations", {})
+    included = condition.get("included_materials", {})
+    print(f"Record Condition: {condition.get('project', '')}")
+    print(f"Category: {condition.get('category', '')}")
+    print()
+    print("Identity:")
+    print(f"  Artist: {identity.get('artist') or '-'}")
+    print(f"  Title: {identity.get('title') or '-'}")
+    print(f"  Label: {identity.get('label') or '-'}")
+    print(f"  Catalog number: {identity.get('catalog_number') or '-'}")
+    print()
+    print("Grading:")
+    print(f"  Media condition: {display_missing(grading.get('media_condition'))}")
+    print(f"  Sleeve condition: {display_missing(grading.get('sleeve_condition'))}")
+    print(f"  Overall condition: {grading.get('overall_condition', 'unassessed')}")
+    print(f"  Grading standard: {grading.get('grading_standard', 'visual')}")
+    print(f"  Playback tested: {'yes' if grading.get('playback_tested') else 'no'}")
+    print(f"  Visual grade only: {'yes' if grading.get('visual_grade_only') else 'no'}")
+    print(f"  Confidence: {grading.get('confidence', 'low')}")
+    print()
+    print("Sleeve observations:")
+    print(f"  Poly sleeve: {display_unknown(included.get('poly_sleeve'))}")
+    print(f"  Spine readable: {display_unknown(sleeve.get('spine_readable'))}")
+    print(f"  Ring wear: {display_unknown(sleeve.get('ring_wear'))}")
+    print(f"  Shelf wear: {display_unknown(sleeve.get('shelf_wear'))}")
+    print(f"  Corner wear: {display_unknown(sleeve.get('corner_wear'))}")
+    print(f"  Seam split: {display_unknown(sleeve.get('seam_split'))}")
+    print()
+    print("Media observations:")
+    print(f"  Scratches: {display_unknown(media.get('scratches'))}")
+    print(f"  Scuffs: {display_unknown(media.get('scuffs'))}")
+    print(f"  Warping: {display_unknown(media.get('warping'))}")
+    print(f"  Dust: {display_unknown(media.get('dust'))}")
+    print()
+    print("Safe disclosure:")
+    for item in condition.get("safe_disclosure", []):
+        print(f"  {item}")
+    print()
+    print("Next steps:")
+    for step in condition.get("next_steps", []):
+        print(f"  {step.get('priority', '').upper()} {step.get('task', '')}")
+    print()
+    print("Wrote:")
+    print(f"  {paths['json']}")
+    print(f"  {paths['md']}")
+
+
 def command_appraisal_context(args):
     context, paths = context_with_paths(args.identifier)
     if args.json:
@@ -1406,6 +1753,39 @@ def command_listing_draft_export(args):
         print(f"  {paths['md']}")
 
 
+def command_record_condition(args):
+    condition, paths = record_condition_with_paths(args.identifier)
+    if args.json:
+        print(json.dumps(condition, indent=2))
+    else:
+        print_record_condition_summary(condition, paths)
+
+
+def command_record_condition_update(args):
+    values = vars(args).copy()
+    values.pop("identifier", None)
+    values.pop("func", None)
+    values.pop("json", None)
+    try:
+        condition, paths = record_condition_update(args.identifier, **values)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    if getattr(args, "json", False):
+        print(json.dumps(condition, indent=2))
+    else:
+        print_record_condition_summary(condition, paths)
+
+
+def command_record_condition_export(args):
+    condition, paths = record_condition_with_paths(args.identifier)
+    if getattr(args, "json", False):
+        print(json.dumps({"condition": condition, "paths": paths}, indent=2))
+    else:
+        print("Record condition exported:")
+        print(f"  {paths['json']}")
+        print(f"  {paths['md']}")
+
+
 def register_appraisal_context_subcommands(projects_sub) -> None:
     context_p = projects_sub.add_parser("appraisal-context", help="Build appraisal context for a project")
     context_p.add_argument("identifier")
@@ -1461,3 +1841,45 @@ def register_appraisal_context_subcommands(projects_sub) -> None:
     draft_export_p.add_argument("identifier")
     draft_export_p.add_argument("--json", action="store_true")
     draft_export_p.set_defaults(func=command_listing_draft_export)
+
+    condition_p = projects_sub.add_parser("record-condition", help="Show record condition capture")
+    condition_p.add_argument("identifier")
+    condition_p.add_argument("--json", action="store_true")
+    condition_p.set_defaults(func=command_record_condition)
+
+    condition_update_p = projects_sub.add_parser("record-condition-update", help="Update record condition capture")
+    condition_update_p.add_argument("identifier")
+    condition_update_p.add_argument("--media-condition")
+    condition_update_p.add_argument("--sleeve-condition")
+    condition_update_p.add_argument("--condition", choices=["new", "excellent", "very_good", "good", "fair", "poor", "parts_only", "unassessed"])
+    condition_update_p.add_argument("--grading-standard", default="visual")
+    condition_update_p.add_argument("--playback-tested")
+    condition_update_p.add_argument("--visual-grade-only")
+    condition_update_p.add_argument("--grading-note")
+    condition_update_p.add_argument("--scratches")
+    condition_update_p.add_argument("--scuffs")
+    condition_update_p.add_argument("--warping")
+    condition_update_p.add_argument("--dust")
+    condition_update_p.add_argument("--fingerprints")
+    condition_update_p.add_argument("--label-condition")
+    condition_update_p.add_argument("--ring-wear")
+    condition_update_p.add_argument("--shelf-wear")
+    condition_update_p.add_argument("--corner-wear")
+    condition_update_p.add_argument("--edge-wear")
+    condition_update_p.add_argument("--seam-split")
+    condition_update_p.add_argument("--spine-readable")
+    condition_update_p.add_argument("--writing")
+    condition_update_p.add_argument("--stickers")
+    condition_update_p.add_argument("--water-damage")
+    condition_update_p.add_argument("--poly-sleeve")
+    condition_update_p.add_argument("--inner-sleeve")
+    condition_update_p.add_argument("--insert")
+    condition_update_p.add_argument("--poster")
+    condition_update_p.add_argument("--note")
+    condition_update_p.add_argument("--json", action="store_true")
+    condition_update_p.set_defaults(func=command_record_condition_update)
+
+    condition_export_p = projects_sub.add_parser("record-condition-export", help="Write record condition files")
+    condition_export_p.add_argument("identifier")
+    condition_export_p.add_argument("--json", action="store_true")
+    condition_export_p.set_defaults(func=command_record_condition_export)
