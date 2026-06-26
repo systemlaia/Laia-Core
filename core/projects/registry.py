@@ -2991,10 +2991,22 @@ def print_project_briefing(data: dict) -> None:
     sale_item = data.get("sale_item", {})
     print("Sale Item:")
     if sale_item:
+        functional = sale_item.get("condition", {}).get("functional", "")
+        if functional == "not_applicable":
+            functional = "not applicable"
         print(f"  {sale_item.get('title', '')}")
         print(f"  condition: {sale_item.get('condition', {}).get('overall', '')}")
-        print(f"  functional: {sale_item.get('condition', {}).get('functional', '')}")
+        print(f"  functional: {functional}")
         print(f"  sale status: {sale_item.get('sale', {}).get('status', '')}")
+        if sale_item.get("category") == "records":
+            record_metadata = sale_item.get("record_metadata", {})
+            print("  Record:")
+            print(f"    artist: {record_metadata.get('artist', '')}")
+            print(f"    title: {record_metadata.get('title', '')}")
+            print(f"    label: {record_metadata.get('record_label', '')}")
+            print(f"    catalog number: {record_metadata.get('catalog_number', '')}")
+            print(f"    media condition: {record_metadata.get('media_condition', '')}")
+            print(f"    sleeve condition: {record_metadata.get('sleeve_condition', '')}")
     else:
         print("  none")
     print()
@@ -3023,9 +3035,12 @@ def print_project_briefing(data: dict) -> None:
         source_ids = {
             source.get("source_id") for source in photo_edit.get("sources", [])[1:] if source.get("source_id")
         }
+        category = sale_item.get("category") if sale_item else ""
+        hero_role = "cover_front" if category == "records" else "hero"
+        recommended_roles = ["cover_back"] if category == "records" else ["rear", "ports"]
         heroes = [
             image for image in photo_edit.get("images", [])
-            if image.get("role") == "hero" and image.get("review_status") == "approved"
+            if image.get("role") == hero_role and image.get("review_status") == "approved"
         ]
         print(f"  sources: {len(photo_edit.get('sources', []))}")
         print(f"  workspace images: {photo_edit.get('image_count', 0)}")
@@ -3042,13 +3057,13 @@ def print_project_briefing(data: dict) -> None:
                 )
             )
         )
-        print(f"  hero image: {'approved' if heroes else 'missing'}")
+        print(f"  {hero_role} image: {'approved' if heroes else 'missing'}")
         approved_roles = {
             image.get("role")
             for image in photo_edit.get("images", [])
             if image.get("review_status") == "approved"
         }
-        missing_coverage = [role for role in ["rear", "ports"] if role not in approved_roles]
+        missing_coverage = [role for role in recommended_roles if role not in approved_roles]
         print(f"  verification: {photo_edit.get('status', '').replace('_', ' ')}")
         print(f"  missing coverage: {', '.join(missing_coverage) if missing_coverage else 'none'}")
     else:
@@ -4124,6 +4139,11 @@ def register_projects_subcommands(sub):
     except (ImportError, ModuleNotFoundError):
         from core.projects.sale_items import register_sale_item_subcommands
     register_sale_item_subcommands(projects_sub)
+    try:
+        from projects.appraisal_context import register_appraisal_context_subcommands
+    except (ImportError, ModuleNotFoundError):
+        from core.projects.appraisal_context import register_appraisal_context_subcommands
+    register_appraisal_context_subcommands(projects_sub)
 
     projects_sub.add_parser("list", help="List project records").set_defaults(func=command_projects_list)
 
