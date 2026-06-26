@@ -77,7 +77,7 @@ CHANNEL_PRESETS = {
 }
 ACTIVE_LISTING_STATUSES = LISTING_STATUSES - {"sold", "cancelled", "expired", "removed"}
 CONDITION_VALUES = {"unassessed", "parts_only", "poor", "fair", "good", "very_good", "excellent", "new"}
-FUNCTIONAL_STATES = {"untested", "working", "partially_working", "not_working", "unknown"}
+FUNCTIONAL_STATES = {"untested", "working", "partially_working", "not_working", "unknown", "not_applicable"}
 EDIT_STATUSES = {"unedited", "editing", "edited", "exported", "approved", "rejected"}
 PHOTO_ROLES = {
     "hero",
@@ -108,6 +108,23 @@ PHOTO_ROLES = {
 UNIQUE_ROLES = PHOTO_ROLES - {"detail", "other", "defect", "accessories"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".raf", ".raw", ".dng"}
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
+
+
+def display_functional_status(value: str) -> str:
+    return "not applicable" if value == "not_applicable" else str(value or "")
+
+
+def sale_item_category(item: Optional[dict]) -> str:
+    return str((item or {}).get("category", "")).strip().lower()
+
+
+def verification_profile_for_item(item: Optional[dict]) -> str:
+    category = sale_item_category(item)
+    if category == "records":
+        return "records"
+    if category == "electronics" or item is None:
+        return "electronics"
+    return "generic"
 
 
 def registry_module():
@@ -381,7 +398,7 @@ def sale_item_markdown(item: dict) -> str:
             f"- Model: {item.get('model', '')}",
             f"- Category: {item.get('category', '')}",
             f"- Condition: {condition.get('overall', '')}",
-            f"- Functional: {condition.get('functional', '')}",
+            f"- Functional: {display_functional_status(condition.get('functional', ''))}",
             f"- Sale status: {sale.get('status', '')}",
             f"- Asking price: {pricing.get('asking_price')}",
             "",
@@ -479,6 +496,19 @@ def update_sale_item(identifier: str, **updates) -> dict:
             pricing[key] = decimal_text(decimal_value(updates[key], key))
     if updates.get("pricing_note") is not None:
         pricing["pricing_notes"] = updates["pricing_note"]
+    record_metadata = item.setdefault("record_metadata", {})
+    record_field_map = {
+        "record_artist": "artist",
+        "record_title": "title",
+        "record_label": "record_label",
+        "catalog_number": "catalog_number",
+        "media_condition": "media_condition",
+        "sleeve_condition": "sleeve_condition",
+        "grading_note": "grading_note",
+    }
+    for update_key, metadata_key in record_field_map.items():
+        if updates.get(update_key) is not None:
+            record_metadata[metadata_key] = updates[update_key]
     if updates.get("status") is not None:
         if updates["status"] not in SALE_STATUSES:
             raise ValueError(f"Invalid sale status: {updates['status']}")
@@ -1360,21 +1390,74 @@ def edit_source_detail(identifier: str, source_identifier: str) -> dict:
     return {**source, "image_count": len(images), "images": rows}
 
 
-def verify_photo_edit(identifier: str) -> dict:
-    manifest = load_edit_manifest(identifier)
-    approved = [image for image in manifest["images"] if image.get("review_status") == "approved"]
-    errors = []
-    warnings = []
-    heroes = [image for image in approved if image.get("role") == "hero"]
-    if not approved:
-        errors.append("At least one approved image is required.")
-    if len(heroes) != 1:
-        errors.append("Exactly one approved hero image is required.")
+def approved_role_counts(approved: list[dict]) -> dict:
     role_counts = {}
     for image in approved:
         role = image.get("role")
         if role:
             role_counts[role] = role_counts.get(role, 0) + 1
+    return role_counts
+
+
+def photo_coverage(profile: str, role_counts: dict) -> dict:
+    if profile == "records":
+        roles = ["cover_front", "cover_back"]
+    elif profile == "electronics":
+        roles = ["hero", "model_label", "rear", "ports"]
+    else:
+        roles = []
+    return {
+        role: "approved" if role_counts.get(role, 0) else "missing"
+        for role in roles
+    }
+
+
+def verify_photo_profile(profile: str, approved: list[dict], role_counts: dict, item: Optional[dict]) -> tuple[list[str], list[str]]:
+    errors = []
+    warnings = []
+    if not approved:
+        errors.append("At least one approved image is required.")
+    if profile == "records":
+        cover_front_count = role_counts.get("cover_front", 0)
+        if cover_front_count != 1:
+            errors.append("Exactly one approved cover_front image is required.")
+        if role_counts.get("cover_back", 0) < 1:
+            warnings.append("No approved cover_back image.")
+        return errors, warnings
+    if profile == "generic":
+        return errors, warnings
+    heroes = role_counts.get("hero", 0)
+    if heroes != 1:
+        errors.append("Exactly one approved hero image is required.")
+    if item is None:
+        return errors, warnings
+    if not role_counts.get("model_label", 0):
+        warnings.append("No approved model-label image.")
+    if item["condition"].get("known_defects") and not role_counts.get("defect", 0):
+        warnings.append("Known defects exist but no approved defect image.")
+    if len(approved) < 3:
+        warnings.append("Fewer than three approved listing images.")
+    for role in ["rear", "ports"]:
+        if not role_counts.get(role, 0):
+            warnings.append(f"No approved {role} image.")
+    return errors, warnings
+
+
+def verify_photo_edit(identifier: str) -> dict:
+    manifest = load_edit_manifest(identifier)
+    approved = [image for image in manifest["images"] if image.get("review_status") == "approved"]
+    try:
+        item = load_sale_item(identifier)
+    except FileNotFoundError:
+        item = None
+    profile = verification_profile_for_item(item)
+    errors = []
+    warnings = []
+    role_counts = approved_role_counts(approved)
+    profile_errors, profile_warnings = verify_photo_profile(profile, approved, role_counts, item)
+    errors.extend(profile_errors)
+    warnings.extend(profile_warnings)
+    for image in approved:
         render = Path(image.get("export_path", ""))
         if not render.is_file():
             errors.append(f"Approved export missing: {image.get('filename', '')}")
@@ -1389,16 +1472,6 @@ def verify_photo_edit(identifier: str) -> dict:
     for role, count in role_counts.items():
         if role in UNIQUE_ROLES and count > 1:
             errors.append(f"Duplicate unique role: {role}")
-    item = load_sale_item(identifier)
-    if not any(image.get("role") == "model_label" for image in approved):
-        warnings.append("No approved model-label image.")
-    if item["condition"].get("known_defects") and not any(image.get("role") == "defect" for image in approved):
-        warnings.append("Known defects exist but no approved defect image.")
-    if len(approved) < 3:
-        warnings.append("Fewer than three approved listing images.")
-    for role in ["rear", "ports"]:
-        if not any(image.get("role") == role for image in approved):
-            warnings.append(f"No approved {role} image.")
     orientations = {
         "landscape" if image.get("dimensions", {}).get("width", 0) >= image.get("dimensions", {}).get("height", 0) else "portrait"
         for image in approved
@@ -1413,32 +1486,55 @@ def verify_photo_edit(identifier: str) -> dict:
         manifest["reviewed_at"] = utc_now()
         manifest["completed_at"] = manifest["reviewed_at"]
         manifest["pending_filenames"] = []
-        update_sale_item(identifier, status="photos_ready")
+        if item is not None:
+            update_sale_item(identifier, status="photos_ready")
     manifest["history"].append(
         {
             "event": "project_reverified" if success and was_reverify else "verification",
             "timestamp": utc_now(),
             "success": success,
+            "profile": profile,
             "errors": errors,
             "warnings": warnings,
         }
     )
     refresh_edit_counts(manifest)
     save_edit_manifest(identifier, manifest)
-    write_edit_report(identifier, manifest, errors, warnings)
-    return {"success": success, "errors": errors, "warnings": warnings, "approved_count": len(approved)}
+    coverage = photo_coverage(profile, role_counts)
+    write_edit_report(identifier, manifest, errors, warnings, profile, coverage)
+    return {
+        "success": success,
+        "profile": profile,
+        "coverage": coverage,
+        "errors": errors,
+        "warnings": warnings,
+        "approved_count": len(approved),
+    }
 
 
-def write_edit_report(identifier: str, manifest: dict, errors: list, warnings: Optional[list] = None) -> Path:
+def write_edit_report(
+    identifier: str,
+    manifest: dict,
+    errors: list,
+    warnings: Optional[list] = None,
+    profile: Optional[str] = None,
+    coverage: Optional[dict] = None,
+) -> Path:
     warnings = warnings or []
+    coverage = coverage or {}
     lines = [
         f"# Photo Edit Report: {manifest.get('project_id', '')}",
         "",
         f"- Status: {manifest.get('status', '')}",
+        f"- Profile: {profile or 'unknown'}",
         f"- Source images: {manifest.get('image_count', 0)}",
         f"- XMP sidecars: {manifest.get('edited_count', 0)}",
         f"- Rendered exports: {manifest.get('exported_count', 0)}",
         f"- Approved: {manifest.get('approved_count', 0)}",
+        "",
+        "## Coverage",
+        *(f"- {role}: {state}" for role, state in coverage.items()),
+        *(["- none"] if not coverage else []),
         "",
         "## Errors",
         *(f"- {value}" for value in errors),
@@ -1536,6 +1632,7 @@ def package_photos(identifier: str) -> dict:
 
 
 def listing_missing_fields(item: dict, photo_manifest: Optional[dict]) -> list[str]:
+    profile = verification_profile_for_item(item)
     missing = []
     if not item.get("title"):
         missing.append("title")
@@ -1543,7 +1640,7 @@ def listing_missing_fields(item: dict, photo_manifest: Optional[dict]) -> list[s
         missing.append("category")
     if item["condition"].get("overall") == "unassessed":
         missing.append("condition")
-    if item["condition"].get("functional") in {"untested", "unknown"}:
+    if profile == "electronics" and item["condition"].get("functional") in {"untested", "unknown"}:
         missing.append("functional status")
     if item["pricing"].get("asking_price") is None:
         missing.append("asking price")
@@ -1567,6 +1664,7 @@ def build_listing_package(identifier: str) -> dict:
         "record_type": "laia.listing_package",
         "record_version": "0.1",
         "project_id": pid,
+        "profile": verification_profile_for_item(item),
         "item": item,
         "photos": photos.get("photos", []),
         "source": item.get("source", {}),
@@ -1859,6 +1957,46 @@ def bootstrap_sale_item(identifier: str) -> dict:
     return {"sale_item": item, "created_tasks": created, "task_count": len(registry.project_tasks(pid))}
 
 
+def bootstrap_record_sale_item(
+    identifier: str,
+    packet: str,
+    cohort: str,
+    artist: str,
+    title: str,
+    label: str = "",
+    catalog_number: str = "",
+) -> dict:
+    display_title = " - ".join(value for value in [artist.strip(), title.strip()] if value)
+    item = init_sale_item(
+        identifier,
+        title=display_title,
+        manufacturer=label,
+        model=catalog_number,
+        category="records",
+        cohort=cohort,
+        packet=packet,
+    )
+    item = update_sale_item(
+        identifier,
+        title=display_title,
+        manufacturer=label,
+        model=catalog_number,
+        category="records",
+        functional_status="not_applicable",
+    )
+    item["condition"]["functional"] = "not_applicable"
+    item["record_metadata"] = {
+        "artist": artist, "title": title, "record_label": label,
+        "catalog_number": catalog_number,
+        "media_condition": "",
+        "sleeve_condition": "",
+        "grading_note": "",
+    }
+    item["source"]["packet_id"] = packet
+    item["source"]["cohort_id"] = cohort
+    return write_sale_item(identifier, item)
+
+
 def sale_briefing(identifier: str) -> dict:
     item = migrate_sale_item(read_json(sale_item_path(identifier), {}))
     edit = migrate_edit_manifest(read_json(edit_manifest_path(identifier), {}))
@@ -1909,7 +2047,13 @@ def register_sale_item_subcommands(projects_sub) -> None:
 
     update_p = projects_sub.add_parser("sale-item-update", help="Update sale item fields")
     update_p.add_argument("identifier")
-    for option in ["title", "manufacturer", "model", "category", "subcategory", "description", "condition-note", "known-defect", "included-item", "missing-item", "serial-number", "asking-price", "minimum-price", "estimated-value", "pricing-note"]:
+    for option in [
+        "title", "manufacturer", "model", "category", "subcategory", "description",
+        "condition-note", "known-defect", "included-item", "missing-item",
+        "serial-number", "asking-price", "minimum-price", "estimated-value",
+        "pricing-note", "record-artist", "record-title", "record-label",
+        "catalog-number", "media-condition", "sleeve-condition", "grading-note",
+    ]:
         update_p.add_argument(f"--{option}")
     update_p.add_argument("--condition", choices=sorted(CONDITION_VALUES))
     update_p.add_argument("--functional-status", choices=sorted(FUNCTIONAL_STATES))
@@ -2004,6 +2148,17 @@ def register_sale_item_subcommands(projects_sub) -> None:
     bootstrap_p.add_argument("identifier")
     bootstrap_p.add_argument("--json", action="store_true")
     bootstrap_p.set_defaults(func=command_sale_item_bootstrap)
+
+    bootstrap_record_p = projects_sub.add_parser("sale-item-bootstrap-record", help="Initialize a lightweight record sale item")
+    bootstrap_record_p.add_argument("identifier")
+    bootstrap_record_p.add_argument("--packet", required=True)
+    bootstrap_record_p.add_argument("--cohort", required=True)
+    bootstrap_record_p.add_argument("--artist", required=True)
+    bootstrap_record_p.add_argument("--title", required=True)
+    bootstrap_record_p.add_argument("--label", default="")
+    bootstrap_record_p.add_argument("--catalog-number", default="")
+    bootstrap_record_p.add_argument("--json", action="store_true")
+    bootstrap_record_p.set_defaults(func=command_sale_item_bootstrap_record)
 
     prepare_p = projects_sub.add_parser("photo-edit-prepare", help="Prepare a Darktable editing workspace")
     prepare_p.add_argument("identifier")
@@ -2252,6 +2407,17 @@ def command_sale_item_bootstrap(args):
         print(f"Sale item tasks created: {len(result['created_tasks'])}")
 
 
+def command_sale_item_bootstrap_record(args):
+    item = bootstrap_record_sale_item(
+        args.identifier, args.packet, args.cohort, args.artist, args.title,
+        args.label, args.catalog_number,
+    )
+    if args.json:
+        emit(item, True)
+    else:
+        print(f"Record sale item: {item['item_id']} - {item['title']}")
+
+
 def command_photo_edit_prepare(args):
     result = prepare_photo_edit(args.identifier, args.cohort, args.source, args.copy_mode)
     if args.json:
@@ -2472,10 +2638,18 @@ def command_photo_edit_verify(args):
         emit(result, True)
     else:
         print("Photo edit verification: " + ("ok" if result["success"] else "failed"))
+        print(f"Profile: {result['profile']}")
+        if result.get("coverage"):
+            print("Coverage:")
+            for role, state in result["coverage"].items():
+                print(f"  {role}: {state}")
         for error in result["errors"]:
             print(f"ERROR: {error}")
-        for warning in result["warnings"]:
-            print(f"WARNING: {warning}")
+        if result["warnings"]:
+            for warning in result["warnings"]:
+                print(f"WARNING: {warning}")
+        else:
+            print("Warnings: none")
     if not result["success"]:
         raise SystemExit(2)
 
