@@ -1,4 +1,5 @@
 import json
+import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
@@ -59,6 +60,10 @@ def appraisal_root(project_id: str) -> Path:
     return registry_module().project_folder(project_id) / "appraisal"
 
 
+def listing_root(project_id: str) -> Path:
+    return registry_module().project_folder(project_id) / "listing"
+
+
 def context_path(project_id: str) -> Path:
     return appraisal_root(project_id) / "context.json"
 
@@ -69,6 +74,14 @@ def research_path(project_id: str) -> Path:
 
 def research_markdown_path(project_id: str) -> Path:
     return appraisal_root(project_id) / "research.md"
+
+
+def listing_draft_context_path(project_id: str) -> Path:
+    return listing_root(project_id) / "draft_context.json"
+
+
+def listing_draft_markdown_path(project_id: str) -> Path:
+    return listing_root(project_id) / "draft.md"
 
 
 def load_optional_sale_item(project_id: str) -> dict:
@@ -793,6 +806,406 @@ def render_appraisal_research_markdown(research: dict) -> str:
     return "\n".join(lines)
 
 
+def approved_role_files_from_context(context: dict) -> dict:
+    coverage = context.get("evidence", {}).get("photo_coverage", {})
+    return {
+        role: row.get("files", [])
+        for role, row in coverage.items()
+        if row.get("status") == "approved" and row.get("files")
+    }
+
+
+def year_from_text(*values) -> Optional[str]:
+    for value in values:
+        match = re.search(r"\b(19\d{2}|20\d{2})\b", str(value or ""))
+        if match:
+            return match.group(1)
+    return None
+
+
+def record_visual_note(item: dict, research: dict) -> str:
+    metadata = item.get("record_metadata", {})
+    if metadata.get("grading_note"):
+        return metadata["grading_note"]
+    for note in research.get("manual_notes", []):
+        text = note.get("note", "")
+        if "spine" in text.lower() or "printed in" in text.lower():
+            return text
+    return ""
+
+
+def record_draft_title(identity: dict) -> str:
+    base = " - ".join(value for value in [identity.get("artist"), identity.get("title")] if value) or "Used vinyl record"
+    if identity.get("label") and identity.get("catalog_number"):
+        title_label = re.sub(r"\s+Records\b", "", identity["label"], flags=re.IGNORECASE).strip()
+        return f"{base} LP - {title_label} {identity['catalog_number']}"
+    return f"{base} LP"
+
+
+def record_readiness(item: dict, context: dict, draft_description: str) -> dict:
+    identity = context.get("identity", {})
+    condition = context.get("condition", {})
+    pricing = item.get("pricing", {})
+    photo_roles = approved_role_files_from_context(context)
+    has_front_back = bool(photo_roles.get("cover_front")) and bool(photo_roles.get("cover_back"))
+    has_condition = (
+        item.get("condition", {}).get("overall") not in (None, "", "unassessed")
+        or bool(condition.get("media_condition"))
+        or bool(condition.get("sleeve_condition"))
+    )
+    has_price = pricing.get("asking_price") is not None
+    missing = []
+    if not has_front_back:
+        missing.append("front_back_photos")
+    if not has_condition:
+        missing.append("condition")
+    if not has_price:
+        missing.append("asking_price")
+    if not draft_description:
+        missing.append("description")
+    can_publish = not missing
+    collector_roles = ["label_a", "label_b", "vinyl_a", "vinyl_b", "matrix"]
+    collector_photos = all(photo_roles.get(role) for role in collector_roles)
+    if can_publish and collector_photos and identity.get("pressing") and identity.get("matrix_runout"):
+        state = "ready_collector"
+    elif can_publish:
+        state = "ready_basic"
+    elif "condition" in missing:
+        state = "needs_condition"
+    elif "asking_price" in missing:
+        state = "needs_price"
+    else:
+        state = "draft_context_only"
+    reasons = []
+    if "condition" in missing:
+        reasons.append("Condition")
+    if "asking_price" in missing:
+        reasons.append("asking price")
+    reason = " and ".join(reasons) + " are missing." if reasons else "Draft is ready for basic publication."
+    warnings = []
+    if not condition.get("play_tested"):
+        warnings.append("Playback not tested.")
+    if not identity.get("pressing"):
+        warnings.append("Pressing/version not confirmed.")
+    if not condition.get("media_condition") and not condition.get("sleeve_condition"):
+        warnings.append("Media and sleeve condition are not graded.")
+    return {
+        "can_publish": can_publish,
+        "state": state,
+        "reason": reason,
+        "missing": missing,
+        "warnings": warnings,
+    }
+
+
+def record_condition_disclosure(condition: dict) -> str:
+    parts = []
+    if condition.get("media_condition"):
+        parts.append(f"Media condition: {condition['media_condition']}, visually graded.")
+    else:
+        parts.append("Media condition: not yet graded.")
+    if condition.get("sleeve_condition"):
+        parts.append(f"Sleeve condition: {condition['sleeve_condition']}.")
+    else:
+        parts.append("Sleeve condition: not yet graded.")
+    parts.append("Playback tested: yes." if condition.get("play_tested") else "Playback has not been tested.")
+    if condition.get("visual_grade_only"):
+        parts.append("Visual grade only.")
+    return "\n".join(parts)
+
+
+def record_full_description(identity: dict, condition: dict, visual_note: str) -> str:
+    title = identity.get("title") or "this record"
+    artist = identity.get("artist") or "the artist"
+    label = identity.get("label")
+    catalog = identity.get("catalog_number")
+    if label and catalog:
+        first = f"Used copy of {title} by {artist} on {label}, catalog number {catalog}."
+    else:
+        first = f"Used copy of {title} by {artist}."
+    lines = [first]
+    if visual_note:
+        lines.append(f"Visual inspection note: {visual_note}")
+    if not condition.get("play_tested"):
+        lines.append("Playback has not been tested.")
+    if not condition.get("media_condition") and not condition.get("sleeve_condition"):
+        lines.append("Media and sleeve condition are not yet graded.")
+    else:
+        if condition.get("media_condition"):
+            lines.append(f"Media condition: {condition['media_condition']}, visually graded.")
+        if condition.get("sleeve_condition"):
+            lines.append(f"Sleeve condition: {condition['sleeve_condition']}.")
+    lines.append("Please review the photos for visible sleeve condition.")
+    return "\n\n".join(lines)
+
+
+def record_safe_claims(identity: dict, context: dict, condition: dict, photo_roles: dict, visual_note: str) -> list[str]:
+    claims = ["Used vinyl record."]
+    if identity.get("label") and identity.get("catalog_number"):
+        claims.append(f"{identity['label']} {identity['catalog_number']}.")
+    if "PRINTED IN U.S.A" in visual_note.upper() or "PRINTED IN U.S.A." in visual_note.upper():
+        claims.append("Printed in U.S.A. text observed.")
+    if photo_roles.get("cover_front") and photo_roles.get("cover_back"):
+        claims.append("Front and back cover photos are available.")
+    if not condition.get("play_tested"):
+        claims.append("Playback not tested.")
+    for claim in context.get("safe_listing_language", []):
+        if claim not in claims:
+            claims.append(claim)
+    return claims
+
+
+def record_avoid_claims(context: dict) -> list[str]:
+    return [
+        "Do not claim first pressing.",
+        "Do not claim specific pressing/version.",
+        "Do not claim playback quality.",
+        "Do not claim Near Mint/Excellent condition.",
+        "Do not claim inserts/posters are included.",
+    ]
+
+
+def record_draft_next_steps(readiness: dict) -> list[dict]:
+    steps = []
+    if "condition" in readiness.get("missing", []):
+        steps.append({"priority": "high", "task": "Add media and sleeve condition."})
+    if "asking_price" in readiness.get("missing", []):
+        steps.append({"priority": "high", "task": "Set asking price."})
+    steps.append({"priority": "medium", "task": "Capture label/vinyl/matrix photos if collector pricing matters."})
+    return steps
+
+
+def build_record_listing_draft_context(project_id_or_identifier: str, item: dict, context: dict, research: dict) -> dict:
+    identity = dict(context.get("identity", {}))
+    visual_note = record_visual_note(item, research)
+    identity["year"] = year_from_text(visual_note, item.get("title"))
+    condition = {
+        "condition": item.get("condition", {}).get("overall") or "unassessed",
+        "media_condition": context.get("condition", {}).get("media_condition"),
+        "sleeve_condition": context.get("condition", {}).get("sleeve_condition"),
+        "grading_note": context.get("condition", {}).get("grading_note") or visual_note or None,
+        "playback_tested": bool(context.get("condition", {}).get("play_tested")),
+        "visual_grade_only": bool(context.get("condition", {}).get("visual_grade_only", True)),
+    }
+    photo_roles = approved_role_files_from_context(context)
+    pricing = item.get("pricing", {})
+    research_pricing = research.get("pricing_summary", {})
+    title = record_draft_title(identity)
+    full_description = record_full_description(identity, condition, visual_note)
+    readiness = record_readiness(item, context, full_description)
+    pricing_note = research_pricing.get("rationale") or "Price pending until condition and comps are confirmed."
+    if pricing.get("asking_price") is not None and research_pricing.get("confidence") == "low":
+        readiness.setdefault("warnings", []).append("Pricing confidence low.")
+    return {
+        "project": registry_module().find_project(project_id_or_identifier),
+        "category": item.get("category", ""),
+        "profile": context.get("profile", "generic"),
+        "readiness": readiness,
+        "identity": identity,
+        "photo_evidence": {
+            "approved_photo_count": context.get("evidence", {}).get("approved_photo_count", 0),
+            "roles": photo_roles,
+        },
+        "pricing": {
+            "asking_price": pricing.get("asking_price"),
+            "research_confidence": research_pricing.get("confidence", "low"),
+            "suggested_asking_price": research_pricing.get("suggested_asking_price"),
+            "pricing_note": pricing_note,
+        },
+        "condition": condition,
+        "safe_claims": record_safe_claims(identity, context, condition, photo_roles, visual_note),
+        "avoid_claiming": record_avoid_claims(context),
+        "drafts": {
+            "title": title,
+            "short_description": (
+                f"Used copy of {identity.get('artist') or 'the artist'} - {identity.get('title') or 'this record'}"
+                + (f" on {identity.get('label')}, catalog {identity.get('catalog_number')}." if identity.get("label") and identity.get("catalog_number") else ".")
+                + " Playback not tested. See photos for sleeve condition."
+            ),
+            "full_description": full_description,
+            "condition_disclosure": record_condition_disclosure(condition),
+            "photo_note": "Front and back cover photos are available." if photo_roles.get("cover_front") and photo_roles.get("cover_back") else "Photo coverage is incomplete.",
+            "pricing_disclosure": "Price pending until condition and comps are confirmed." if pricing.get("asking_price") is None else f"Asking price: ${pricing.get('asking_price')}.",
+        },
+        "next_steps": record_draft_next_steps(readiness),
+        "generated_at": registry_module().utc_now(),
+    }
+
+
+def build_generic_listing_draft_context(project_id_or_identifier: str, item: dict, context: dict, research: dict) -> dict:
+    pricing = item.get("pricing", {})
+    missing = []
+    if item.get("condition", {}).get("overall") in (None, "", "unassessed"):
+        missing.append("condition")
+    if pricing.get("asking_price") is None:
+        missing.append("asking_price")
+    return {
+        "project": registry_module().find_project(project_id_or_identifier),
+        "category": item.get("category") or context.get("category", "unknown"),
+        "profile": "generic",
+        "readiness": {
+            "can_publish": not missing,
+            "state": "ready_basic" if not missing else "draft_context_only",
+            "reason": "Condition or asking price is missing." if missing else "Draft is ready for basic publication.",
+            "missing": missing,
+            "warnings": ["Category-specific listing draft rules are not configured."],
+        },
+        "identity": context.get("identity", {}),
+        "photo_evidence": {
+            "approved_photo_count": context.get("evidence", {}).get("approved_photo_count", 0),
+            "roles": approved_role_files_from_context(context),
+        },
+        "pricing": {
+            "asking_price": pricing.get("asking_price"),
+            "research_confidence": research.get("pricing_summary", {}).get("confidence", "low"),
+            "suggested_asking_price": research.get("pricing_summary", {}).get("suggested_asking_price"),
+            "pricing_note": research.get("pricing_summary", {}).get("rationale", ""),
+        },
+        "condition": item.get("condition", {}),
+        "safe_claims": context.get("safe_listing_language", []),
+        "avoid_claiming": context.get("avoid_claiming", []),
+        "drafts": {
+            "title": item.get("title") or context.get("identity", {}).get("title") or "Used item",
+            "short_description": "Used item. See photos and notes for condition.",
+            "full_description": "Used item. See photos and notes for condition.",
+            "condition_disclosure": "Condition details should be confirmed before posting.",
+            "photo_note": "See approved listing photos.",
+            "pricing_disclosure": "Price pending until condition and comps are confirmed." if pricing.get("asking_price") is None else f"Asking price: ${pricing.get('asking_price')}.",
+        },
+        "next_steps": [{"priority": "medium", "task": "Add category-specific listing details."}],
+        "generated_at": registry_module().utc_now(),
+    }
+
+
+def build_listing_draft_context(project_id_or_identifier: str) -> dict:
+    registry = registry_module()
+    project_id = registry.find_project(project_id_or_identifier)
+    item = load_optional_sale_item(project_id)
+    context = current_appraisal_context(project_id)
+    write_appraisal_context(project_id, context)
+    research = read_research(project_id)
+    write_appraisal_research(project_id, research)
+    if context.get("profile") == "records":
+        return build_record_listing_draft_context(project_id, item, context, research)
+    return build_generic_listing_draft_context(project_id, item, context, research)
+
+
+def write_listing_draft_context(project_id_or_identifier: str, draft: Optional[dict] = None) -> dict:
+    registry = registry_module()
+    project_id = registry.find_project(project_id_or_identifier)
+    draft = draft or build_listing_draft_context(project_id)
+    root = listing_root(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    json_path = listing_draft_context_path(project_id)
+    md_path = listing_draft_markdown_path(project_id)
+    registry.write_json(json_path, draft)
+    md_path.write_text(render_listing_draft_markdown(draft), encoding="utf-8")
+    return {"json": str(json_path), "md": str(md_path)}
+
+
+def listing_draft_with_paths(project_id_or_identifier: str) -> tuple[dict, dict]:
+    draft = build_listing_draft_context(project_id_or_identifier)
+    paths = write_listing_draft_context(project_id_or_identifier, draft)
+    return draft, paths
+
+
+def render_listing_draft_markdown(draft: dict) -> str:
+    if draft.get("profile") == "records":
+        return render_record_listing_draft_markdown(draft)
+    return render_generic_listing_draft_markdown(draft)
+
+
+def render_record_listing_draft_markdown(draft: dict) -> str:
+    readiness = draft.get("readiness", {})
+    drafts = draft.get("drafts", {})
+    condition = draft.get("condition", {})
+    pricing = draft.get("pricing", {})
+    high_steps = [step["task"] for step in draft.get("next_steps", []) if step.get("priority") == "high"]
+    medium_steps = [step["task"] for step in draft.get("next_steps", []) if step.get("priority") == "medium"]
+    lines = [
+        f"# Listing Draft: {draft.get('project', '')}",
+        "",
+        "## Status",
+        "",
+        f"Publish ready: {'yes' if readiness.get('can_publish') else 'no'}  ",
+        f"Reason: {readiness.get('reason', '')}",
+        "",
+        "## Draft title",
+        "",
+        drafts.get("title", ""),
+        "",
+        "## Draft description",
+        "",
+        drafts.get("full_description", ""),
+        "",
+        "## Condition disclosure",
+        "",
+        f"- Media condition: {condition.get('media_condition') or 'not yet graded'}",
+        f"- Sleeve condition: {condition.get('sleeve_condition') or 'not yet graded'}",
+        f"- Playback tested: {'yes' if condition.get('playback_tested') else 'no'}",
+        f"- Visual grade only: {'yes' if condition.get('visual_grade_only') else 'no'}",
+        "",
+        "## Pricing",
+        "",
+        f"Asking price: {render_price(pricing.get('asking_price')) if pricing.get('asking_price') is not None else 'not set'}  ",
+        f"Pricing confidence: {pricing.get('research_confidence', 'low')}  ",
+        f"Suggested asking price: {render_price(pricing.get('suggested_asking_price'))}  ",
+        f"Pricing note: {pricing.get('pricing_note', '')}",
+        "",
+        "## Photos",
+        "",
+        "Approved listing photos:",
+    ]
+    roles = draft.get("photo_evidence", {}).get("roles", {})
+    for role in ["cover_front", "cover_back", "label_a", "label_b", "vinyl_a", "vinyl_b", "matrix"]:
+        if roles.get(role):
+            lines.append(f"- {role}: {', '.join(roles[role])}")
+    lines.extend(["", "## Safe claims"])
+    lines.extend(f"- {claim}" for claim in draft.get("safe_claims", []))
+    lines.extend(["", "## Do not claim"])
+    claim_labels = {
+        "Do not claim first pressing.": "First pressing.",
+        "Do not claim specific pressing/version.": "Specific pressing/version.",
+        "Do not claim playback quality.": "Playback quality.",
+        "Do not claim Near Mint/Excellent condition.": "Near Mint or Excellent condition.",
+        "Do not claim inserts/posters are included.": "Complete inserts/posters.",
+    }
+    lines.extend(f"- {claim_labels.get(claim, claim)}" for claim in draft.get("avoid_claiming", []))
+    lines.extend(
+        [
+            "",
+            "## Next steps before posting",
+            "",
+            "High:",
+            *(f"- {task}" for task in high_steps),
+            *(["- none"] if not high_steps else []),
+            "",
+            "Medium:",
+            *(f"- {task}" for task in medium_steps),
+            *(["- none"] if not medium_steps else []),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_generic_listing_draft_markdown(draft: dict) -> str:
+    readiness = draft.get("readiness", {})
+    return "\n".join(
+        [
+            f"# Listing Draft: {draft.get('project', '')}",
+            "",
+            f"Publish ready: {'yes' if readiness.get('can_publish') else 'no'}",
+            f"State: {readiness.get('state', '')}",
+            "",
+            "## Draft title",
+            "",
+            draft.get("drafts", {}).get("title", ""),
+            "",
+        ]
+    )
+
+
 def print_appraisal_context_summary(context: dict, paths: dict) -> None:
     print(f"Appraisal Context: {context.get('project', '')}")
     print(f"Category: {context.get('category', '')}")
@@ -885,6 +1298,42 @@ def print_appraisal_research_summary(research: dict, paths: dict) -> None:
     print(f"  {paths['md']}")
 
 
+def print_listing_draft_summary(draft: dict, paths: dict) -> None:
+    readiness = draft.get("readiness", {})
+    pricing = draft.get("pricing", {})
+    print(f"Listing Draft Context: {draft.get('project', '')}")
+    print(f"Category: {draft.get('category', '')}")
+    print(f"Profile: {draft.get('profile', '')}")
+    print()
+    print("Draft title:")
+    print(f"  {draft.get('drafts', {}).get('title', '')}")
+    print()
+    print("Readiness:")
+    print(f"  Can publish: {'yes' if readiness.get('can_publish') else 'no'}")
+    print(f"  State: {readiness.get('state', '')}")
+    print(f"  Missing: {', '.join(readiness.get('missing', [])) if readiness.get('missing') else '-'}")
+    print()
+    print("Warnings:")
+    for warning in readiness.get("warnings", []):
+        print(f"  {warning.rstrip('.')}")
+    print()
+    print("Photos:")
+    roles = draft.get("photo_evidence", {}).get("roles", {})
+    for role in ["cover_front", "cover_back", "label_a", "label_b", "vinyl_a", "vinyl_b", "matrix"]:
+        if roles.get(role):
+            print(f"  {role}: {', '.join(roles[role])}")
+    print()
+    print("Pricing:")
+    asking = pricing.get("asking_price")
+    print(f"  Asking price: {render_price(asking) if asking is not None else '-'}")
+    print(f"  Research confidence: {pricing.get('research_confidence', 'low')}")
+    print(f"  Suggested asking price: {render_price(pricing.get('suggested_asking_price'))}")
+    print()
+    print("Wrote:")
+    print(f"  {paths['json']}")
+    print(f"  {paths['md']}")
+
+
 def command_appraisal_context(args):
     context, paths = context_with_paths(args.identifier)
     if args.json:
@@ -939,6 +1388,24 @@ def command_appraisal_research_export(args):
         print(f"  {paths['md']}")
 
 
+def command_listing_draft_context(args):
+    draft, paths = listing_draft_with_paths(args.identifier)
+    if args.json:
+        print(json.dumps(draft, indent=2))
+    else:
+        print_listing_draft_summary(draft, paths)
+
+
+def command_listing_draft_export(args):
+    draft, paths = listing_draft_with_paths(args.identifier)
+    if getattr(args, "json", False):
+        print(json.dumps({"draft": draft, "paths": paths}, indent=2))
+    else:
+        print("Listing draft exported:")
+        print(f"  {paths['json']}")
+        print(f"  {paths['md']}")
+
+
 def register_appraisal_context_subcommands(projects_sub) -> None:
     context_p = projects_sub.add_parser("appraisal-context", help="Build appraisal context for a project")
     context_p.add_argument("identifier")
@@ -984,3 +1451,13 @@ def register_appraisal_context_subcommands(projects_sub) -> None:
     research_export_p.add_argument("identifier")
     research_export_p.add_argument("--json", action="store_true")
     research_export_p.set_defaults(func=command_appraisal_research_export)
+
+    draft_p = projects_sub.add_parser("listing-draft-context", help="Build listing draft context for a project")
+    draft_p.add_argument("identifier")
+    draft_p.add_argument("--json", action="store_true")
+    draft_p.set_defaults(func=command_listing_draft_context)
+
+    draft_export_p = projects_sub.add_parser("listing-draft-export", help="Write listing draft files")
+    draft_export_p.add_argument("identifier")
+    draft_export_p.add_argument("--json", action="store_true")
+    draft_export_p.set_defaults(func=command_listing_draft_export)
