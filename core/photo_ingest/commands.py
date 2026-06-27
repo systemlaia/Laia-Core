@@ -1,3 +1,4 @@
+import argparse
 import csv
 import hashlib
 import json
@@ -18,6 +19,7 @@ try:
         add_subject,
         append_cohort_history_event,
         build_contact_sheet,
+        build_contact_sheet_html,
         cohort_dir,
         create_cohort,
         export_cohort,
@@ -42,6 +44,7 @@ except ModuleNotFoundError:
         add_subject,
         append_cohort_history_event,
         build_contact_sheet,
+        build_contact_sheet_html,
         cohort_dir,
         create_cohort,
         export_cohort,
@@ -57,6 +60,25 @@ except ModuleNotFoundError:
         upsert_cohort_project_link,
         update_cohort,
         update_subject,
+    )
+
+try:
+    from photo_ingest.record_vision import (
+        confirm_record,
+        create_record_pair_cohorts,
+        create_record_cohorts,
+        identify_records,
+        suggest_record_pairs,
+        suggest_record_groups,
+    )
+except ModuleNotFoundError:
+    from core.photo_ingest.record_vision import (
+        confirm_record,
+        create_record_pair_cohorts,
+        create_record_cohorts,
+        identify_records,
+        suggest_record_pairs,
+        suggest_record_groups,
     )
 
 try:
@@ -1265,12 +1287,190 @@ def command_cohort_update(args):
 
 def command_cohort_contact_sheet(args):
     packet = _subject_packet(args)
-    result = build_contact_sheet(packet, args.cohort, limit=args.limit, columns=args.columns)
+    limit = None if getattr(args, "all", False) else args.limit
+    html_result = build_contact_sheet_html(
+        packet, args.cohort, limit=limit, page_size=args.page_size,
+        columns=args.columns, use_previews=args.use_previews,
+    )
+    jpg_result = None
+    jpg_error = ""
+    try:
+        jpg_result = build_contact_sheet(packet, args.cohort, limit=limit, columns=args.columns)
+    except SystemExit as exc:
+        jpg_error = str(exc)
+    result = {
+        "path": jpg_result["path"] if jpg_result else "",
+        "html_path": html_result["path"],
+        "files_path": html_result["files_path"],
+        "file_count": html_result["file_count"],
+        "jpg_error": jpg_error,
+    }
+    if args.open:
+        subprocess.run(["open", html_result["path"]], check=False)
     if args.json:
         _print_json(result)
     else:
-        print(f"Contact sheet: {result['path']}")
+        if result["path"]:
+            print(f"Contact sheet: {result['path']}")
+        elif jpg_error:
+            print(f"JPEG contact sheet unavailable: {jpg_error}")
+        print(f"HTML contact sheet: {result['html_path']}")
         print(f"Files: {result['file_count']}")
+
+
+def command_cohort_contact_sheet_html(args):
+    packet = _subject_packet(args)
+    result = build_contact_sheet_html(
+        packet, args.cohort, page_size=args.page_size,
+        columns=args.columns, use_previews=args.use_previews,
+    )
+    if args.open:
+        subprocess.run(["open", result["path"]], check=False)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"HTML contact sheet: {result['path']}")
+        print(f"Files: {result['file_count']}")
+
+
+def command_cohort_identify_records(args):
+    packet = _subject_packet(args)
+    result = identify_records(
+        packet, args.cohort, model=args.model, limit=args.limit,
+        start=args.start, end=args.end, force=args.force,
+    )
+    if args.open_review:
+        subprocess.run(["open", result["markdown_path"]], check=False)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Record candidates: {result['markdown_path']}")
+        print(f"Processed: {result['processed']}  Successful: {result['successful']}  Failed: {result['failed']}")
+
+
+def command_records_suggest_groups(args):
+    packet = _subject_packet(args)
+    result = suggest_record_groups(packet, args.cohort, group_size=args.group_size)
+    created = []
+    if args.create_cohorts:
+        created = create_record_cohorts(packet, args.cohort, limit=args.limit)
+    if args.json:
+        _print_json({**result, "created_cohorts": [row["cohort_id"] for row in created]})
+    else:
+        print("Suggested record groups:")
+        for group in result["groups"]:
+            print(f"\n{group['group_id']}")
+            for value in group["files"]:
+                print(f"  {value}")
+        print(f"\nSuggestions: {result['markdown_path']}")
+        if created:
+            print(f"Created cohorts: {len(created)}")
+
+
+def command_records_create_cohorts(args):
+    packet = _subject_packet(args)
+    if not args.from_suggestions:
+        raise SystemExit("Use --from-suggestions.")
+    created = create_record_cohorts(packet, args.cohort, limit=args.limit)
+    if args.json:
+        _print_json(created)
+    else:
+        for cohort in created:
+            print(f"{cohort['cohort_id']}: {cohort['name']} ({len(cohort['files'])} files)")
+
+
+def _comma_list(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def command_records_suggest_pairs(args):
+    packet = _subject_packet(args)
+    result = suggest_record_pairs(
+        packet,
+        args.parent_cohort,
+        start=args.start,
+        end=args.end,
+        offset=args.offset or 0,
+        limit=args.limit,
+        mode=args.mode,
+        prefix=args.prefix,
+        start_index=args.start_index,
+    )
+    if args.json:
+        _print_json(result)
+        return
+    print(f"Record Pair Suggestions: {result['parent_cohort']}")
+    print(f"Packet: {result['packet']}")
+    print(f"Mode: {result['mode']}")
+    print("Range:")
+    print(f"  start: {result['range'].get('start') or '-'}")
+    print(f"  end: {result['range'].get('end') or '-'}")
+    print("\nSuggested pairs:")
+    for suggestion in result["suggestions"]:
+        print(f"  {suggestion['id']}")
+        print(f"    front: {suggestion['files'][0]}")
+        print(f"    back:  {suggestion['files'][1]}")
+        print(f"    status: {suggestion['status']}")
+        print()
+    print("Warnings:")
+    warnings = list(result.get("warnings", []))
+    for suggestion in result["suggestions"]:
+        warnings.extend(suggestion.get("warnings", []))
+    if warnings:
+        for warning in warnings:
+            print(f"  {warning}")
+    else:
+        print("  none")
+    print(f"\nSuggestions: {result['markdown_path']}")
+
+
+def command_records_create_pair_cohorts(args):
+    packet = _subject_packet(args)
+    if not args.from_suggestions and not args.suggestions_file:
+        raise SystemExit("Use --from-suggestions or --suggestions-file.")
+    result = create_record_pair_cohorts(
+        packet,
+        args.parent_cohort,
+        suggestions_file=args.suggestions_file,
+        limit=args.limit,
+        only=_comma_list(args.only),
+        skip_existing=args.skip_existing,
+        force_existing=args.force_existing,
+        mark_ready=args.mark_ready,
+        export=args.export,
+        contact_sheets=args.contact_sheets,
+    )
+    if args.json:
+        _print_json(result)
+        return
+    print(f"Created record pair cohorts: {len(result['created'])}")
+    print(f"Skipped existing: {sum(1 for item in result['skipped'] if item.get('reason') == 'already exists')}")
+    if result["created"]:
+        print("\nCreated:")
+        for item in result["created"]:
+            print(f"  {item['cohort_id']}: {item['file_count']} files")
+    if result["skipped"]:
+        print("\nSkipped:")
+        for item in result["skipped"]:
+            print(f"  {item['id']}: {item['reason']}")
+    if result["exports"]:
+        print("\nExports:")
+        for item in result["exports"]:
+            print(f"  {item['destination']}")
+
+
+def command_record_confirm(args):
+    packet = _subject_packet(args)
+    result = confirm_record(
+        packet, args.cohort, args.artist, args.title, args.label,
+        args.catalog_number, args.notes,
+    )
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"Confirmed record metadata: {result['path']}")
 
 
 def command_cohort_export(args):
@@ -1560,8 +1760,93 @@ def register_photo_subcommands(sub):
     contact_p.add_argument("cohort")
     contact_p.add_argument("--limit", type=int)
     contact_p.add_argument("--columns", type=int, default=5)
+    contact_p.add_argument("--page-size", type=int, default=25)
+    contact_p.add_argument("--html", action="store_true")
+    contact_p.add_argument("--labels", action="store_true")
+    contact_p.add_argument("--all", action="store_true")
+    contact_p.add_argument("--use-previews", action=argparse.BooleanOptionalAction, default=True)
+    contact_p.add_argument("--open", action="store_true")
     contact_p.add_argument("--json", action="store_true")
     contact_p.set_defaults(func=command_cohort_contact_sheet)
+
+    html_contact_p = photo_sub.add_parser("cohort-contact-sheet-html", help="Build a labeled HTML cohort contact sheet")
+    html_contact_p.add_argument("packet")
+    html_contact_p.add_argument("cohort")
+    html_contact_p.add_argument("--page-size", type=int, default=25)
+    html_contact_p.add_argument("--columns", type=int, default=5)
+    html_contact_p.add_argument("--use-previews", action=argparse.BooleanOptionalAction, default=True)
+    html_contact_p.add_argument("--open", action="store_true")
+    html_contact_p.add_argument("--json", action="store_true")
+    html_contact_p.set_defaults(func=command_cohort_contact_sheet_html)
+
+    identify_records_p = photo_sub.add_parser("cohort-identify-records", help="Identify vinyl records with local Ollama vision")
+    identify_records_p.add_argument("packet")
+    identify_records_p.add_argument("cohort")
+    identify_records_p.add_argument("--model", default="llava")
+    identify_records_p.add_argument("--limit", type=int)
+    identify_records_p.add_argument("--start")
+    identify_records_p.add_argument("--end")
+    identify_records_p.add_argument("--force", action="store_true")
+    identify_records_p.add_argument("--json", action="store_true")
+    identify_records_p.add_argument("--open-review", action="store_true")
+    identify_records_p.set_defaults(func=command_cohort_identify_records)
+
+    suggest_groups_p = photo_sub.add_parser("records-suggest-groups", help="Suggest adjacent image groups for records")
+    suggest_groups_p.add_argument("packet")
+    suggest_groups_p.add_argument("cohort")
+    suggest_groups_p.add_argument("--group-size", type=int, default=3)
+    suggest_groups_p.add_argument("--create-cohorts", action="store_true")
+    suggest_groups_p.add_argument("--limit", type=int)
+    suggest_groups_p.add_argument("--json", action="store_true")
+    suggest_groups_p.set_defaults(func=command_records_suggest_groups)
+
+    create_records_p = photo_sub.add_parser("records-create-cohorts", help="Create record child cohorts from suggestions")
+    create_records_p.add_argument("packet")
+    create_records_p.add_argument("cohort")
+    create_records_p.add_argument("--from-suggestions", action="store_true")
+    create_records_p.add_argument("--limit", type=int)
+    create_records_p.add_argument("--json", action="store_true")
+    create_records_p.set_defaults(func=command_records_create_cohorts)
+
+    suggest_pairs_p = photo_sub.add_parser("records-suggest-pairs", help="Suggest two-photo record child cohorts")
+    suggest_pairs_p.add_argument("packet")
+    suggest_pairs_p.add_argument("parent_cohort")
+    suggest_pairs_p.add_argument("--start")
+    suggest_pairs_p.add_argument("--end")
+    suggest_pairs_p.add_argument("--offset", type=int, default=0)
+    suggest_pairs_p.add_argument("--limit", type=int)
+    suggest_pairs_p.add_argument("--mode", default="pairs")
+    suggest_pairs_p.add_argument("--prefix", default="record")
+    suggest_pairs_p.add_argument("--start-index", type=int, default=1)
+    suggest_pairs_p.add_argument("--dry-run", action="store_true")
+    suggest_pairs_p.add_argument("--json", action="store_true")
+    suggest_pairs_p.set_defaults(func=command_records_suggest_pairs)
+
+    create_pairs_p = photo_sub.add_parser("records-create-pair-cohorts", help="Create two-photo record child cohorts from pair suggestions")
+    create_pairs_p.add_argument("packet")
+    create_pairs_p.add_argument("parent_cohort")
+    create_pairs_p.add_argument("--from-suggestions", action="store_true")
+    create_pairs_p.add_argument("--suggestions-file")
+    create_pairs_p.add_argument("--limit", type=int)
+    create_pairs_p.add_argument("--only")
+    create_pairs_p.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+    create_pairs_p.add_argument("--force-existing", action=argparse.BooleanOptionalAction, default=False)
+    create_pairs_p.add_argument("--mark-ready", action="store_true")
+    create_pairs_p.add_argument("--export", action="store_true")
+    create_pairs_p.add_argument("--contact-sheets", action="store_true")
+    create_pairs_p.add_argument("--json", action="store_true")
+    create_pairs_p.set_defaults(func=command_records_create_pair_cohorts)
+
+    confirm_record_p = photo_sub.add_parser("record-confirm", help="Write human-confirmed record metadata")
+    confirm_record_p.add_argument("packet")
+    confirm_record_p.add_argument("cohort")
+    confirm_record_p.add_argument("--artist", required=True)
+    confirm_record_p.add_argument("--title", required=True)
+    confirm_record_p.add_argument("--label", default="")
+    confirm_record_p.add_argument("--catalog-number", default="")
+    confirm_record_p.add_argument("--notes", default="")
+    confirm_record_p.add_argument("--json", action="store_true")
+    confirm_record_p.set_defaults(func=command_record_confirm)
 
     cohort_export_p = photo_sub.add_parser("cohort-export", help="Export cohort originals and metadata")
     cohort_export_p.add_argument("packet")

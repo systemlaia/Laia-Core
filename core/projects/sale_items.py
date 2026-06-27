@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 import os
@@ -1997,6 +1998,170 @@ def bootstrap_record_sale_item(
     return write_sale_item(identifier, item)
 
 
+def _read_record_cohort_metadata(packet_path: Path, cohort_id: str) -> dict:
+    try:
+        from photo_ingest.cohorts import _read_json, cohort_dir
+    except (ImportError, ModuleNotFoundError):
+        from core.photo_ingest.cohorts import _read_json, cohort_dir
+    return _read_json(cohort_dir(packet_path, cohort_id) / "record_metadata.json", {})
+
+
+def _record_placeholder_title(cohort_id: str) -> str:
+    suffix = cohort_id.replace("-", " ").title()
+    return f"Unidentified {suffix}"
+
+
+def _record_bootstrap_metadata(packet_path: Path, cohort_id: str) -> dict:
+    metadata = _read_record_cohort_metadata(packet_path, cohort_id)
+    artist = str(metadata.get("artist") or "").strip()
+    title = str(metadata.get("title") or "").strip()
+    return {
+        "artist": artist,
+        "title": title,
+        "record_label": str(metadata.get("record_label") or metadata.get("label") or "").strip(),
+        "catalog_number": str(metadata.get("catalog_number") or "").strip(),
+        "display_title": " - ".join(value for value in [artist, title] if value) or _record_placeholder_title(cohort_id),
+        "metadata_found": bool(metadata),
+    }
+
+
+def _record_cohort_rows(packet_path: Path, parent: str, prefix: str, limit: Optional[int], only: Optional[list[str]]) -> list[dict]:
+    try:
+        from photo_ingest.cohorts import read_cohort, read_cohort_index
+    except (ImportError, ModuleNotFoundError):
+        from core.photo_ingest.cohorts import read_cohort, read_cohort_index
+    parent_id = read_cohort(packet_path, parent)["cohort_id"]
+    only_set = {value.strip() for value in (only or []) if value.strip()}
+    rows = [
+        row
+        for row in read_cohort_index(packet_path).get("cohorts", [])
+        if row.get("parent_cohort_id") == parent_id
+        and str(row.get("cohort_id", "")).startswith(f"{prefix}-")
+        and (not only_set or row.get("cohort_id") in only_set)
+    ]
+    rows = sorted(rows, key=lambda row: row.get("cohort_id", ""))
+    return rows[:limit] if limit is not None else rows
+
+
+def bootstrap_record_sale_items_from_cohorts(
+    packet: str,
+    parent: str = "records-for-sale",
+    prefix: str = "record",
+    limit: Optional[int] = None,
+    only: Optional[list[str]] = None,
+    skip_existing: bool = True,
+    prepare_photo_edit_workspace: bool = False,
+    appraisal_context: bool = False,
+    condition: bool = False,
+    listing_draft: bool = False,
+) -> dict:
+    try:
+        from photo_ingest.cohorts import export_cohort, latest_cohort_export_path, read_cohort, resolve_photo_packet
+    except (ImportError, ModuleNotFoundError):
+        from core.photo_ingest.cohorts import export_cohort, latest_cohort_export_path, read_cohort, resolve_photo_packet
+    packet_path = resolve_photo_packet(packet)
+    packet_id = packet_path.name
+    registry = registry_module()
+    rows = _record_cohort_rows(packet_path, parent, prefix, limit, only)
+    created = []
+    skipped = []
+    for row in rows:
+        cohort_id = str(row["cohort_id"])
+        try:
+            existing_project = registry.find_project(cohort_id)
+        except FileNotFoundError:
+            existing_project = ""
+        if existing_project and skip_existing:
+            skipped.append({"project_id": existing_project, "cohort_id": cohort_id, "reason": "already exists"})
+            continue
+        cohort = read_cohort(packet_path, cohort_id)
+        export_path = latest_cohort_export_path(packet_path, cohort)
+        if prepare_photo_edit_workspace and not export_path:
+            export_path = export_cohort(packet_path, cohort_id)["destination"]
+            cohort = read_cohort(packet_path, cohort_id)
+        metadata = _record_bootstrap_metadata(packet_path, cohort_id)
+        project = registry.ensure_project_record(cohort_id, project_type="sale_item", status="active")
+        registry.add_cohort_to_project(
+            project["project_id"],
+            {
+                "packet_id": packet_id,
+                "cohort_id": cohort_id,
+                "cohort_name": cohort.get("name", cohort_id),
+                "cohort_status": cohort.get("status", ""),
+                "parent_cohort_id": cohort.get("parent_cohort_id", ""),
+                "artifact_path": export_path,
+                "linked_at": registry.utc_now(),
+            },
+        )
+        if export_path:
+            registry.add_artifact_to_project(project["project_id"], export_path, packet_id, registry.utc_now(), "photo_cohort_export")
+        item = bootstrap_record_sale_item(
+            project["project_id"],
+            packet_id,
+            cohort_id,
+            metadata["artist"],
+            metadata["display_title"] if not metadata["title"] else metadata["title"],
+            metadata["record_label"],
+            metadata["catalog_number"],
+        )
+        item["title"] = metadata["display_title"]
+        item["manufacturer"] = metadata["record_label"]
+        item["model"] = metadata["catalog_number"]
+        item["record_metadata"] = {
+            "artist": metadata["artist"],
+            "title": metadata["title"],
+            "record_label": metadata["record_label"],
+            "catalog_number": metadata["catalog_number"],
+            "media_condition": "",
+            "sleeve_condition": "",
+            "grading_note": "",
+        }
+        item["sale"]["status"] = "photos_ready" if cohort.get("status") == "ready" else "photos_in_progress"
+        item["sale_status"] = item["sale"]["status"]
+        item["source"]["cohort_export_path"] = export_path
+        write_sale_item(project["project_id"], item)
+        photo_edit = None
+        if prepare_photo_edit_workspace:
+            photo_edit = prepare_photo_edit(project["project_id"], cohort=cohort_id, source=export_path)
+            for image in photo_edit["manifest"].get("images", []):
+                relative = next(
+                    (
+                        file_row.get("relative_path", "")
+                        for file_row in cohort.get("files", [])
+                        if Path(file_row.get("relative_path", "")).name == image.get("source_filename")
+                    ),
+                    "",
+                )
+                position = [file_row.get("relative_path", "") for file_row in cohort.get("files", [])].index(relative) if relative else -1
+                if position == 0:
+                    assign_role(project["project_id"], image["filename"], "cover_front")
+                elif position == 1:
+                    assign_role(project["project_id"], image["filename"], "cover_back")
+        scaffolds = {}
+        if appraisal_context or condition or listing_draft:
+            try:
+                from projects import appraisal_context as appraisal
+            except (ImportError, ModuleNotFoundError):
+                from core.projects import appraisal_context as appraisal
+            if appraisal_context:
+                scaffolds["appraisal_context"] = appraisal.write_appraisal_context(project["project_id"])
+            if condition:
+                scaffolds["condition"] = appraisal.write_record_condition(project["project_id"])
+            if listing_draft:
+                scaffolds["listing_draft"] = appraisal.write_listing_draft_context(project["project_id"])
+        created.append(
+            {
+                "project_id": project["project_id"],
+                "cohort_id": cohort_id,
+                "title": item["title"],
+                "metadata_found": metadata["metadata_found"],
+                "photo_edit": photo_edit["manifest"]["workspace_path"] if photo_edit else "",
+                "scaffolds": scaffolds,
+            }
+        )
+    return {"packet": packet_id, "parent": parent, "created": created, "skipped": skipped}
+
+
 def sale_briefing(identifier: str) -> dict:
     item = migrate_sale_item(read_json(sale_item_path(identifier), {}))
     edit = migrate_edit_manifest(read_json(edit_manifest_path(identifier), {}))
@@ -2159,6 +2324,23 @@ def register_sale_item_subcommands(projects_sub) -> None:
     bootstrap_record_p.add_argument("--catalog-number", default="")
     bootstrap_record_p.add_argument("--json", action="store_true")
     bootstrap_record_p.set_defaults(func=command_sale_item_bootstrap_record)
+
+    bootstrap_records_p = projects_sub.add_parser(
+        "sale-items-bootstrap-records-from-cohorts",
+        help="Bootstrap record sale item projects from record child cohorts",
+    )
+    bootstrap_records_p.add_argument("packet")
+    bootstrap_records_p.add_argument("--parent", default="records-for-sale")
+    bootstrap_records_p.add_argument("--prefix", default="record")
+    bootstrap_records_p.add_argument("--limit", type=int)
+    bootstrap_records_p.add_argument("--only")
+    bootstrap_records_p.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+    bootstrap_records_p.add_argument("--prepare-photo-edit", action="store_true")
+    bootstrap_records_p.add_argument("--appraisal-context", action="store_true")
+    bootstrap_records_p.add_argument("--condition", action="store_true")
+    bootstrap_records_p.add_argument("--listing-draft", action="store_true")
+    bootstrap_records_p.add_argument("--json", action="store_true")
+    bootstrap_records_p.set_defaults(func=command_sale_items_bootstrap_records_from_cohorts)
 
     prepare_p = projects_sub.add_parser("photo-edit-prepare", help="Prepare a Darktable editing workspace")
     prepare_p.add_argument("identifier")
@@ -2416,6 +2598,40 @@ def command_sale_item_bootstrap_record(args):
         emit(item, True)
     else:
         print(f"Record sale item: {item['item_id']} - {item['title']}")
+
+
+def _comma_list(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def command_sale_items_bootstrap_records_from_cohorts(args):
+    result = bootstrap_record_sale_items_from_cohorts(
+        args.packet,
+        parent=args.parent,
+        prefix=args.prefix,
+        limit=args.limit,
+        only=_comma_list(args.only),
+        skip_existing=args.skip_existing,
+        prepare_photo_edit_workspace=args.prepare_photo_edit,
+        appraisal_context=args.appraisal_context,
+        condition=args.condition,
+        listing_draft=args.listing_draft,
+    )
+    if args.json:
+        emit(result, True)
+        return
+    print(f"Record sale item projects bootstrapped: {len(result['created'])}")
+    print(f"Skipped existing: {sum(1 for item in result['skipped'] if item.get('reason') == 'already exists')}")
+    if result["created"]:
+        print("\nCreated:")
+        for item in result["created"]:
+            print(f"  {item['project_id']}: {item['title']}")
+    if result["skipped"]:
+        print("\nSkipped:")
+        for item in result["skipped"]:
+            print(f"  {item['cohort_id']}: {item['reason']}")
 
 
 def command_photo_edit_prepare(args):
