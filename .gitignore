@@ -1,63 +1,98 @@
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
+# LAIA runtime packet/data directories
+Inbox/
+Archive/
+Catalog/
+Exports/
+
+# Grocy runtime data and local secrets
+grocy/data/
+grocy/.env
+
+# Local environment files / secrets
+.env
+*.env
+!.env.example
+!*.env.example
 
 # Python
 __pycache__/
-*.py[cod]
-*.pyo
+*.pyc
+.pytest_cache/
 .venv/
-venv/
-.env
+.venv-flipper/
 
-# Logs / runtime
+# Build/test outputs
 *.log
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Runtime/service state
+filebrowser.db
 logs/
-tmp/
-.temp/
+index/
+indexes/
+mounts/
+/packets/
+snapshots/
 
-# LAIA generated archive artifacts
-archive/catalog/
-archive/reports/
-archive/manifests/
-archive/evidence/
-archive/tmp/
-archive/**/*.sqlite
-archive/**/*.sqlite3
-archive/**/*.db
+# Service app data
+homeassistant/
+mosquitto/
+nodered/
+ollama/
+open-webui/
+portainer/
 
-# Obsidian volatile workspace state
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
+# Build/staging/sandboxes
+build_sandboxes/
+flipper_staging/
+pebble_staging/
+momentum_rebuild/
+manual_install/
+flipper_sd_backup/
+flipper_sd_map/
+releases/
+git-bundles/
 
-# Obsidian cache-ish / local-only state
-.trash/
-.obsidian/cache/
-.obsidian/plugins/*/data.json.tmp
+# Local vaults / local knowledge stores
+vault/
+vaults/
+.obsidian/
 
-# Common temporary files
-*.tmp
-*.swp
-~$*
+# Nested/local experiments
+LAIA/
+git/
 
-# Local-only / experimental service work
-services/
-scripts/laia-comfy-start.sh
-scripts/laia_manifest/catalog_search.py
+# Local backup files
+*.bak
 
-# LAIA generated NAS manifests
-archive/nas_manifests/*.csv
-archive/nas_manifests/*.json
-archive/nas_manifests/*.md
+# Compiled binaries
+c_core/test_stardate_core
 
-# Allow LAIA OpenClaw service architecture
-!services/
-!services/openclaw/
-!services/openclaw/**
+# Local backup files
+*.bak
 
-# Ignore embedded ComfyUI checkout
-services/visual/ComfyUI/
+# Compiled binaries
+c_core/test_stardate_core
 
-# Ignore embedded ComfyUI checkout
-services/visual/ComfyUI/
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# LAIA generated runtime outputs
+/projects/
+/promoted/
+
+# LAIA generated project runtime state
+/projects_registry/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local LAIA working/staging
+video_ingest/working/
