@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${1:-check}"
+
+echo "== LAIA Maintenance =="
+echo "Mode: $MODE"
+echo
+
+section() {
+  echo
+  echo "== $1 =="
+}
+
+run_if_available() {
+  local cmd="$1"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    return 0
+  else
+    echo "Missing command: $cmd"
+    return 1
+  fi
+}
+
+section "System"
+date
+hostname
+pwd
+echo "User: $(whoami)"
+echo "Shell: ${SHELL:-unknown}"
+
+section "Git status"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git branch -vv || true
+  echo
+  git status --short || true
+
+  CURRENT_BRANCH="$(git branch --show-current || true)"
+  if [[ "$CURRENT_BRANCH" == "main" ]]; then
+    if [[ -n "$(git status --short)" ]]; then
+      echo
+      echo "WARNING: You are on main with local changes."
+      echo "Recommended: stash, commit intentionally, or switch to core before active LAIA work."
+    fi
+  fi
+else
+  echo "Not inside a Git repo."
+fi
+
+section "Homebrew"
+if run_if_available brew; then
+  if [[ "$MODE" == "update" ]]; then
+    brew update
+    brew outdated || true
+    brew upgrade
+    brew cleanup
+  else
+    brew --version
+    brew outdated || true
+    echo
+    echo "Run with 'update' to execute:"
+    echo "brew update && brew outdated && brew upgrade && brew cleanup"
+  fi
+
+  echo
+  echo "-- brew doctor --"
+  brew doctor || true
+fi
+
+section "Xcode Command Line Tools"
+xcode-select -p 2>/dev/null || echo "Xcode Command Line Tools path not found."
+git --version 2>/dev/null || true
+clang --version 2>/dev/null | head -n 1 || true
+python3 --version 2>/dev/null || true
+
+section "Python virtual environment"
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+  echo "Active venv: $VIRTUAL_ENV"
+  python -m pip --version || true
+
+  if [[ "$MODE" == "update" ]]; then
+    python -m pip install --upgrade pip setuptools wheel
+  fi
+
+  pip list --outdated || true
+else
+  echo "No active virtual environment detected."
+fi
+
+section "Docker"
+if run_if_available docker; then
+  docker version --format 'Client: {{.Client.Version}}' 2>/dev/null || true
+
+  if docker info >/dev/null 2>&1; then
+    echo "Docker daemon: running"
+    echo
+    docker ps
+    echo
+    docker system df || true
+  else
+    echo "Docker daemon: not reachable"
+  fi
+fi
+
+section "Compose files"
+find "$HOME/LAIA" "$HOME/Projects" \
+  \( -iname "compose.yml" -o -iname "docker-compose.yml" \) \
+  2>/dev/null || true
+
+section "Disk usage"
+df -h
+echo
+echo "-- LAIA-sized directories --"
+for path in "$HOME/LAIA" "$HOME/Projects" "/Volumes/Public/LAIA"; do
+  if [[ -e "$path" ]]; then
+    du -sh "$path" 2>/dev/null || true
+  fi
+done
+
+section "NAS / mounts"
+mount | grep -Ei 'Public|LAIA|qnap|smb|afp' || echo "No obvious LAIA/Public NAS mount found."
+df -h | grep -Ei 'Public|LAIA|Volumes' || true
+
+section "LAIA runtime reminders"
+echo "Do not casually run:"
+echo "  git add ."
+echo "  docker system prune -a"
+echo "  rm -rf archive/ packets/ projects_registry/ promoted/ Inbox/"
+echo
+echo "Preferred active branch:"
+echo "  core"
+echo
+echo "Done."
