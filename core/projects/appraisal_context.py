@@ -46,6 +46,14 @@ def sale_items_module():
     return sale_items
 
 
+def record_identity_evidence_module():
+    try:
+        from projects import record_identity_evidence
+    except (ImportError, ModuleNotFoundError):
+        from core.projects import record_identity_evidence
+    return record_identity_evidence
+
+
 def blank_to_none(value):
     if value in (None, ""):
         return None
@@ -113,6 +121,17 @@ def load_optional_sale_item(project_id: str) -> dict:
 def load_optional_photo_edit(project_id: str) -> dict:
     sale_items = sale_items_module()
     return sale_items.migrate_edit_manifest(sale_items.read_json(sale_items.edit_manifest_path(project_id), {}))
+
+
+def load_optional_identity_evidence(project_id: str) -> dict:
+    evidence_module = record_identity_evidence_module()
+    path = evidence_module.identity_evidence_path(project_id)
+    if not path.is_file():
+        return {}
+    try:
+        return evidence_module.read_record_identity_evidence(project_id)
+    except (FileNotFoundError, ValueError):
+        return {}
 
 
 def category_profile(sale_item: dict) -> str:
@@ -524,6 +543,12 @@ def record_next_steps(identity: dict, condition: dict, item: dict, coverage: dic
     return steps
 
 
+def identity_evidence_lines(evidence: dict) -> list[str]:
+    if not evidence:
+        return []
+    return record_identity_evidence_module().identity_evidence_summary_lines(evidence)
+
+
 def build_record_appraisal_context(project: dict, sale_item: dict, photo_edit: dict) -> dict:
     metadata = sale_item.get("record_metadata", {})
     captured_condition = {}
@@ -555,6 +580,7 @@ def build_record_appraisal_context(project: dict, sale_item: dict, photo_edit: d
     readiness = record_listing_readiness(sale_item, coverage)
     known_claims = record_known_claims(identity, coverage)
     unverified_claims = record_unverified_claims(identity, condition, sale_item)
+    identity_evidence = load_optional_identity_evidence(project.get("project_id", ""))
     return {
         "project": project.get("project_id", ""),
         "category": sale_item.get("category", ""),
@@ -567,6 +593,8 @@ def build_record_appraisal_context(project: dict, sale_item: dict, photo_edit: d
                 coverage.get("cover_front", {}).get("status") == "approved"
                 and coverage.get("cover_back", {}).get("status") == "approved"
             ),
+            "identity_evidence": identity_evidence,
+            "identity_evidence_summary": identity_evidence_lines(identity_evidence),
         },
         "condition": condition,
         "confirmed_facts": known_claims,
@@ -642,6 +670,7 @@ def render_record_appraisal_context_markdown(context: dict) -> str:
     condition = context.get("condition", {})
     readiness = context.get("listing_readiness", {})
     coverage = context.get("evidence", {}).get("photo_coverage", {})
+    identity_evidence = context.get("evidence", {}).get("identity_evidence_summary", [])
     functional = "not applicable" if context.get("category") == "records" else ""
     high_steps = [step["task"] for step in context.get("next_steps", []) if step.get("priority") == "high"]
     medium_steps = [step["task"] for step in context.get("next_steps", []) if step.get("priority") == "medium"]
@@ -658,6 +687,10 @@ def render_record_appraisal_context_markdown(context: dict) -> str:
         "## Confirmed facts",
         *(f"- {claim}" for claim in context.get("known_claims", [])),
         *(["- none"] if not context.get("known_claims") else []),
+        "",
+        "## Identity evidence",
+        *(f"- {line}" for line in identity_evidence),
+        *(["- none"] if not identity_evidence else []),
         "",
         "## Photo evidence",
         "",
@@ -825,6 +858,14 @@ def evidence_limits_from_context(context: dict) -> list[str]:
     for unknown in unknowns:
         if unknown in mapping:
             limits.append(mapping[unknown])
+    evidence = context.get("evidence", {}).get("identity_evidence", {})
+    catalog_summary = record_identity_evidence_module().field_evidence_summary(evidence, "catalog_number") if evidence else None
+    if catalog_summary and catalog_summary.get("source_type") == "physical_inspection":
+        visibility = catalog_summary.get("visibility")
+        if visibility == "not_readable_in_current_photos":
+            limits.append("Catalog number confirmed by physical inspection, not by current photos")
+        else:
+            limits.append("Catalog number confirmed by physical inspection")
     return limits
 
 

@@ -2,6 +2,8 @@ import base64
 import ast
 import json
 import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -9,10 +11,48 @@ from typing import Callable, Optional
 
 
 CONFIDENCE_VALUES = {"low", "medium", "high"}
+INPUT_STRATEGIES = {
+    "approved_photos",
+    "listing_photos",
+    "front_cover_crop",
+    "back_cover_crop",
+    "spine_crop",
+    "label_crop",
+    "matrix_crop",
+    "ocr_text",
+}
+PROMPT_VERSIONS = {
+    "record_identity_v1",
+    "record_identity_text_only_v1",
+    "record_identity_back_cover_v1",
+    "record_catalog_text_v1",
+}
 VISUAL_WARNINGS = [
     "AI visual identification is not confirmed.",
     "Human review is required before metadata promotion.",
 ]
+VISION_MODEL_REGISTRY = {
+    "models": [
+        {
+            "name": "llava:latest",
+            "role": "baseline_general_vision",
+            "enabled": True,
+            "notes": "Baseline local vision model.",
+        },
+        {
+            "name": "llama3.2-vision",
+            "role": "general_vision_candidate",
+            "enabled": False,
+            "notes": "Enable if installed locally.",
+        },
+        {
+            "name": "qwen2.5vl",
+            "role": "text_document_vision_candidate",
+            "enabled": False,
+            "notes": "Enable if installed locally.",
+        },
+    ]
+}
 
 
 def registry_module():
@@ -37,6 +77,14 @@ def appraisal_module():
     except (ImportError, ModuleNotFoundError):
         from core.projects import appraisal_context
     return appraisal_context
+
+
+def record_identity_evidence_module():
+    try:
+        from projects import record_identity_evidence
+    except (ImportError, ModuleNotFoundError):
+        from core.projects import record_identity_evidence
+    return record_identity_evidence
 
 
 def ollama_host() -> str:
@@ -85,6 +133,38 @@ def evaluation_history_path(identifier: str, timestamp: str) -> Path:
     return identity_candidates_root(identifier) / "history" / f"{stamp}_evaluation.json"
 
 
+def runs_root(identifier: str) -> Path:
+    return identity_candidates_root(identifier) / "runs"
+
+
+def run_root(identifier: str, run_id: str) -> Path:
+    return runs_root(identifier) / run_id
+
+
+def run_candidate_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "candidate.json"
+
+
+def run_candidate_markdown_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "candidate.md"
+
+
+def run_raw_response_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "raw_response.txt"
+
+
+def run_metadata_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "run.json"
+
+
+def run_evaluation_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "evaluation.json"
+
+
+def run_evaluation_markdown_path(identifier: str, run_id: str) -> Path:
+    return run_root(identifier, run_id) / "evaluation.md"
+
+
 def read_json(path: Path, default=None):
     if not path.exists():
         return {} if default is None else default
@@ -117,6 +197,110 @@ uncertain_text
 confidence
 
 Do not estimate price, condition grade, rarity, pressing, or version unless explicitly visible."""
+
+
+def model_slug(model: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", str(model or "model")).strip("-").lower()
+    return slug or "model"
+
+
+def model_family(model: str) -> str:
+    return str(model or "").split(":", 1)[0] or "unknown"
+
+
+def source_for_model(model: str) -> str:
+    return "llava" if model_family(model) == "llava" else "vision_model"
+
+
+def model_is_configured(model: str) -> bool:
+    return any(row.get("name") == model for row in VISION_MODEL_REGISTRY["models"])
+
+
+def timestamp_for_id(value: str) -> str:
+    return str(value or "").replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+
+
+def next_run_id(project: str, model: str, generated_at: str) -> str:
+    base = f"{model_slug(model)}-{timestamp_for_id(generated_at)}"
+    candidate = base
+    suffix = 2
+    while run_root(project, candidate).exists():
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def build_run_metadata(
+    project: str,
+    run_id: str,
+    candidate: dict,
+    input_strategy: str,
+    prompt_version: str,
+) -> dict:
+    return {
+        "run_id": run_id,
+        "project": project,
+        "task": "record_identity",
+        "model": candidate.get("model"),
+        "model_family": model_family(candidate.get("model")),
+        "input_strategy": input_strategy,
+        "prompt_version": prompt_version,
+        "status": "candidate",
+        "authority": "unconfirmed_ai_candidate",
+        "candidate_path": str(run_candidate_path(project, run_id)),
+        "raw_response_path": str(run_raw_response_path(project, run_id)),
+        "generated_at": candidate.get("generated_at"),
+    }
+
+
+def detected_ollama_models() -> tuple[list[str], Optional[str]]:
+    if not shutil.which("ollama"):
+        return [], "ollama command not found"
+    try:
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], str(exc)
+    if result.returncode != 0:
+        return [], (result.stderr or result.stdout or "ollama list failed").strip()
+    models = []
+    for line in (result.stdout or "").splitlines()[1:]:
+        parts = line.split()
+        if parts:
+            models.append(parts[0])
+    return models, None
+
+
+def configured_vision_models() -> dict:
+    detected, error = detected_ollama_models()
+    detected_names = set(detected)
+    rows = []
+    for model in VISION_MODEL_REGISTRY["models"]:
+        name = model["name"]
+        installed = name in detected_names or name.split(":", 1)[0] in detected_names
+        rows.append({**model, "installed": installed, "available": model.get("enabled") and installed})
+    return {"models": rows, "detected": detected, "error": error}
+
+
+def command_vision_models(args):
+    data = configured_vision_models()
+    if getattr(args, "json", False):
+        print(json.dumps(data, indent=2))
+        return
+    print("Vision Models")
+    print()
+    print("Configured:")
+    for model in data["models"]:
+        state = "enabled" if model.get("available") else "not installed / disabled"
+        print(f"  {model['name']:20} {model['role']:32} {state}")
+    print()
+    print("Detected Ollama models:")
+    if data.get("error"):
+        print(f"  unavailable: {data['error']}")
+    elif data.get("detected"):
+        for name in data["detected"]:
+            print(f"  {name}")
+    else:
+        print("  none")
 
 
 def encode_image(path: Path) -> str:
@@ -247,7 +431,14 @@ def approved_visual_photos(identifier: str) -> dict:
     raise FileNotFoundError("No approved cover_front/cover_back photos found.\nRun photo-edit-approve first.")
 
 
-def normalize_candidate_response(project: str, raw: str, photos: dict, model: str) -> dict:
+def normalize_candidate_response(
+    project: str,
+    raw: str,
+    photos: dict,
+    model: str,
+    input_strategy: str = "approved_photos",
+    prompt_version: str = "record_identity_v1",
+) -> dict:
     parsed = extract_json_object(raw)
     nested_visible = parsed.get("visible_text") if isinstance(parsed.get("visible_text"), dict) else {}
     merged = {**nested_visible, **parsed} if nested_visible else parsed
@@ -263,11 +454,16 @@ def normalize_candidate_response(project: str, raw: str, photos: dict, model: st
         "visible_text": list_value(merged.get("visible_text")) + list_value(merged.get("front_cover")),
         "confidence": confidence,
     }
+    warnings = list(VISUAL_WARNINGS)
+    if not model_is_configured(model):
+        warnings.append("Model is not in the LAIA vision registry.")
     return {
         "project": project,
         "category": "records",
-        "source": "llava",
+        "source": source_for_model(model),
         "model": model,
+        "input_strategy": input_strategy,
+        "prompt_version": prompt_version,
         "status": "candidate",
         "authority": "unconfirmed_ai_candidate",
         "input_photos": {
@@ -280,7 +476,7 @@ def normalize_candidate_response(project: str, raw: str, photos: dict, model: st
             "back_cover_observations": list_value(merged.get("back_cover_observations")),
             "spine_observations": list_value(merged.get("spine_observations")),
             "uncertain_text": list_value(merged.get("uncertain_text")),
-            "warnings": list(VISUAL_WARNINGS),
+            "warnings": warnings,
         },
         "raw_model_response": raw,
         "review": {
@@ -358,18 +554,86 @@ def write_candidate(project: str, candidate: dict) -> dict:
     return {"json": str(json_path), "md": str(md_path), "history": str(history_path)}
 
 
+def write_candidate_run(project: str, candidate: dict, raw: str, input_strategy: str, prompt_version: str) -> dict:
+    run_id = candidate.get("run_id") or next_run_id(project, candidate.get("model", "model"), candidate["generated_at"])
+    candidate["run_id"] = run_id
+    run_dir = run_root(project, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    candidate_path = run_candidate_path(project, run_id)
+    md_path = run_candidate_markdown_path(project, run_id)
+    raw_path = run_raw_response_path(project, run_id)
+    metadata_path = run_metadata_path(project, run_id)
+    metadata = build_run_metadata(project, run_id, candidate, input_strategy, prompt_version)
+    registry = registry_module()
+    registry.write_json(candidate_path, candidate)
+    registry.write_json(metadata_path, metadata)
+    md_path.write_text(render_candidate_markdown(candidate), encoding="utf-8")
+    raw_path.write_text(raw, encoding="utf-8")
+    return {
+        "run_id": run_id,
+        "run": str(metadata_path),
+        "json": str(candidate_path),
+        "md": str(md_path),
+        "raw": str(raw_path),
+        "metadata": metadata,
+    }
+
+
+def list_candidate_runs(identifier: str) -> list[dict]:
+    project = project_id(identifier)
+    root = runs_root(project)
+    if not root.is_dir():
+        return []
+    runs = []
+    for folder in sorted(root.iterdir(), key=lambda path: path.name):
+        if not folder.is_dir():
+            continue
+        metadata = read_json(folder / "run.json", {})
+        if not metadata:
+            metadata = {
+                "run_id": folder.name,
+                "project": project,
+                "candidate_path": str(folder / "candidate.json"),
+                "generated_at": "",
+            }
+        metadata.setdefault("run_id", folder.name)
+        runs.append(metadata)
+    return sorted(runs, key=lambda row: row.get("generated_at", ""))
+
+
+def read_run_candidate(identifier: str, run_id: str) -> dict:
+    path = run_candidate_path(identifier, run_id)
+    if not path.is_file():
+        raise FileNotFoundError(f"Visual identity candidate run not found: {run_id}")
+    return read_json(path)
+
+
 def record_identify_visual(
     identifier: str,
     model: str = "llava:latest",
     runner: Optional[Callable[[str, str, list[Path]], str]] = None,
+    input_strategy: str = "approved_photos",
+    prompt_version: str = "record_identity_v1",
+    set_current: bool = False,
 ) -> tuple[dict, dict]:
     project = project_id(identifier)
+    if input_strategy not in INPUT_STRATEGIES:
+        raise ValueError(f"Invalid input strategy: {input_strategy}")
+    if prompt_version not in PROMPT_VERSIONS:
+        raise ValueError(f"Invalid prompt version: {prompt_version}")
     photos = approved_visual_photos(project)
     image_paths = [Path(row["path"]) for role in ["cover_front", "cover_back"] for row in photos[role]]
     runner = runner or ollama_visual_generate
     raw = runner(model, candidate_prompt(), image_paths)
-    candidate = normalize_candidate_response(project, raw, photos, model)
-    return candidate, write_candidate(project, candidate)
+    candidate = normalize_candidate_response(project, raw, photos, model, input_strategy, prompt_version)
+    run_paths = write_candidate_run(project, candidate, raw, input_strategy, prompt_version)
+    paths = {"run": run_paths}
+    if set_current or not visual_candidate_path(project).is_file():
+        paths["current"] = write_candidate(project, candidate)
+        paths.update(paths["current"])
+    else:
+        paths.update({"json": run_paths["json"], "md": run_paths["md"]})
+    return candidate, paths
 
 
 def read_candidate(identifier: str) -> dict:
@@ -518,7 +782,13 @@ def print_candidate_summary(candidate: dict, paths: dict) -> None:
 
 def command_record_identify_visual(args):
     try:
-        candidate, paths = record_identify_visual(args.identifier, model=getattr(args, "model", "llava:latest"))
+        candidate, paths = record_identify_visual(
+            args.identifier,
+            model=getattr(args, "model", "llava:latest"),
+            input_strategy=getattr(args, "input_strategy", "approved_photos"),
+            prompt_version=getattr(args, "prompt_version", "record_identity_v1"),
+            set_current=getattr(args, "set_current", False),
+        )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         raise SystemExit(str(exc))
     if getattr(args, "json", False):
@@ -668,6 +938,44 @@ def confirmed_record_identity(identifier: str) -> tuple[dict, dict]:
     return identity, item
 
 
+def identity_evidence_for_project(identifier: str) -> dict:
+    evidence_module = record_identity_evidence_module()
+    path = evidence_module.identity_evidence_path(identifier)
+    if not path.is_file():
+        return {}
+    try:
+        return evidence_module.read_record_identity_evidence(identifier)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def model_expected_to_read(visibility: Optional[str]) -> bool:
+    return visibility in {"clearly_visible", "partially_visible"}
+
+
+def apply_field_evidence_context(field_results: dict, evidence: dict) -> dict:
+    if not evidence:
+        return field_results
+    evidence_module = record_identity_evidence_module()
+    for field, result in field_results.items():
+        summary = evidence_module.field_evidence_summary(evidence, field)
+        if not summary:
+            continue
+        visibility = summary.get("visibility", "unknown")
+        result["source_type"] = summary.get("source_type", "unknown")
+        result["source_visibility"] = visibility
+        result["model_expected_to_read"] = model_expected_to_read(visibility)
+        if result.get("result") == "missing":
+            note = summary.get("note") or ""
+            if visibility == "not_readable_in_current_photos":
+                result["note"] = "Confirmed by physical inspection; not readable in current approved photos."
+            elif visibility == "not_photographed":
+                result["note"] = "Confirmed by non-image evidence; field is not photographed."
+            elif note:
+                result["note"] = note
+    return field_results
+
+
 def candidate_identity_for_evaluation(candidate: dict) -> dict:
     identity = candidate.get("candidate_identity", {})
     return {
@@ -728,7 +1036,10 @@ def visible_text_evaluation(candidate: dict, confirmed_identity: dict, confirmed
 def failure_modes_for_results(field_results: dict, candidate: dict) -> list[str]:
     tags = []
     for field, result in field_results.items():
-        tags.append(f"{field}_{result.get('result')}")
+        if result.get("result") == "missing" and result.get("model_expected_to_read") is False:
+            tags.append(f"{field}_missing_not_readable")
+        else:
+            tags.append(f"{field}_{result.get('result')}")
         if result.get("result") == "unconfirmed" and result.get("candidate"):
             tags.append(f"{field}_candidate_unverified")
     confidence = candidate.get("candidate_identity", {}).get("confidence") or "low"
@@ -776,30 +1087,44 @@ def evaluation_summary(field_results: dict, candidate: dict) -> dict:
 def evaluation_recommendations(evaluation: dict) -> list[str]:
     recommendations = ["Keep visual candidates non-authoritative."]
     modes = set(evaluation.get("failure_modes", []))
+    if any(mode.endswith("_missing_not_readable") for mode in modes):
+        recommendations.append("Capture higher-resolution close-up or spine/label photo for fields not readable in current photos.")
     if any(mode.endswith("_missing") for mode in modes) or any(mode.endswith("_incorrect") for mode in modes):
         recommendations.append("Use higher-resolution crops for spine/catalog text.")
         recommendations.append("Consider separate OCR pass for back cover and spine.")
+    if "matrix_runout_unconfirmed" in modes:
+        recommendations.append("Capture deadwax/matrix photos only if collector-level identification is needed.")
     if evaluation.get("summary", {}).get("overall_result") in {"useful", "strong"}:
         recommendations.append("Continue using visual candidates as review prompts, not metadata authority.")
     return recommendations
 
 
-def build_record_identification_evaluation(identifier: str) -> dict:
+def build_record_identification_evaluation(identifier: str, run_id: Optional[str] = None) -> dict:
     project = project_id(identifier)
-    candidate_file = visual_candidate_path(project)
-    if not candidate_file.is_file():
-        raise FileNotFoundError(
-            "No visual identification candidate found.\n"
-            "Run:\n"
-            f"  laia projects record-identify-visual {project}"
-        )
-    candidate = read_candidate(project)
+    if run_id:
+        candidate = read_run_candidate(project, run_id)
+        candidate_path = f"appraisal/identity_candidates/runs/{run_id}/candidate.json"
+    else:
+        candidate_file = visual_candidate_path(project)
+        if not candidate_file.is_file():
+            raise FileNotFoundError(
+                "No visual identification candidate found.\n"
+                "Run:\n"
+                f"  laia projects record-identify-visual {project}"
+            )
+        candidate = read_candidate(project)
+        candidate_path = "appraisal/identity_candidates/visual_candidate.json"
     confirmed_identity, _item = confirmed_record_identity(project)
+    identity_evidence = identity_evidence_for_project(project)
+    for field, value in identity_evidence.get("identity", {}).items():
+        if field in confirmed_identity and value not in (None, ""):
+            confirmed_identity[field] = value
     candidate_identity = candidate_identity_for_evaluation(candidate)
     field_results = {
         field: compare_identity_field(candidate_identity.get(field), confirmed_identity.get(field))
         for field in ["artist", "title", "label", "catalog_number", "year"]
     }
+    field_results = apply_field_evidence_context(field_results, identity_evidence)
     visible_eval = visible_text_evaluation(candidate, confirmed_identity, manual_research_text(project))
     summary = evaluation_summary(field_results, candidate)
     evaluation = {
@@ -809,7 +1134,10 @@ def build_record_identification_evaluation(identifier: str) -> dict:
         "candidate_source": {
             "source": candidate.get("source"),
             "model": candidate.get("model"),
-            "candidate_path": "appraisal/identity_candidates/visual_candidate.json",
+            "run_id": run_id or candidate.get("run_id"),
+            "input_strategy": candidate.get("input_strategy", "approved_photos"),
+            "prompt_version": candidate.get("prompt_version", "record_identity_v1"),
+            "candidate_path": candidate_path,
             "candidate_confidence": candidate.get("candidate_identity", {}).get("confidence") or "low",
             "candidate_generated_at": candidate.get("generated_at"),
         },
@@ -891,26 +1219,48 @@ def render_evaluation_markdown(evaluation: dict) -> str:
     return "\n".join(lines)
 
 
-def write_record_identification_evaluation(identifier: str, evaluation: Optional[dict] = None) -> dict:
+def write_record_identification_evaluation(identifier: str, evaluation: Optional[dict] = None, run_id: Optional[str] = None) -> dict:
     project = project_id(identifier)
-    evaluation = evaluation or build_record_identification_evaluation(project)
+    evaluation = evaluation or build_record_identification_evaluation(project, run_id)
+    registry = registry_module()
+    if run_id:
+        root = run_root(project, run_id)
+        root.mkdir(parents=True, exist_ok=True)
+        json_path = run_evaluation_path(project, run_id)
+        md_path = run_evaluation_markdown_path(project, run_id)
+        registry.write_json(json_path, evaluation)
+        md_path.write_text(render_evaluation_markdown(evaluation), encoding="utf-8")
+        return {"json": str(json_path), "md": str(md_path)}
     root = identity_candidates_root(project)
     root.mkdir(parents=True, exist_ok=True)
     (root / "history").mkdir(parents=True, exist_ok=True)
     json_path = evaluation_path(project)
     md_path = evaluation_markdown_path(project)
     history_path = evaluation_history_path(project, evaluation["generated_at"])
-    registry = registry_module()
     registry.write_json(json_path, evaluation)
     registry.write_json(history_path, evaluation)
     md_path.write_text(render_evaluation_markdown(evaluation), encoding="utf-8")
     return {"json": str(json_path), "md": str(md_path), "history": str(history_path)}
 
 
-def record_identification_evaluation_with_paths(identifier: str) -> tuple[dict, dict]:
-    evaluation = build_record_identification_evaluation(identifier)
-    paths = write_record_identification_evaluation(identifier, evaluation)
+def record_identification_evaluation_with_paths(identifier: str, run_id: Optional[str] = None) -> tuple[dict, dict]:
+    evaluation = build_record_identification_evaluation(identifier, run_id)
+    paths = write_record_identification_evaluation(identifier, evaluation, run_id)
     return evaluation, paths
+
+
+def evaluate_all_candidate_runs(identifier: str) -> dict:
+    project = project_id(identifier)
+    evaluated = []
+    skipped = []
+    for run in list_candidate_runs(project):
+        run_id = run.get("run_id")
+        if not run_id or not run_candidate_path(project, run_id).is_file():
+            skipped.append({"run_id": run_id or "", "reason": "missing candidate"})
+            continue
+        evaluation, paths = record_identification_evaluation_with_paths(project, run_id)
+        evaluated.append({"run_id": run_id, "evaluation": evaluation, "paths": paths})
+    return {"project": project, "evaluated": evaluated, "skipped": skipped}
 
 
 def print_evaluation_summary(evaluation: dict, paths: dict) -> None:
@@ -941,7 +1291,7 @@ def print_evaluation_summary(evaluation: dict, paths: dict) -> None:
 
 def command_record_identify_evaluate(args):
     try:
-        evaluation, paths = record_identification_evaluation_with_paths(args.identifier)
+        evaluation, paths = record_identification_evaluation_with_paths(args.identifier, getattr(args, "run_id", None))
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(str(exc))
     if getattr(args, "json", False):
@@ -991,6 +1341,138 @@ def command_record_identify_evaluate_batch(args):
         print(f"Skipped {row['project']}: {row['reason']}")
 
 
+def utility_rank(value: str) -> int:
+    return {"low": 0, "medium": 1, "high": 2}.get(str(value or "low"), 0)
+
+
+def result_label(result: dict) -> str:
+    if result.get("result") == "missing" and result.get("model_expected_to_read") is False:
+        return "missing_not_readable"
+    return result.get("result", "-")
+
+
+def read_run_evaluation(identifier: str, run_id: str) -> dict:
+    path = run_evaluation_path(identifier, run_id)
+    return read_json(path, {}) if path.is_file() else {}
+
+
+def build_visual_model_comparison(identifier: str) -> dict:
+    project = project_id(identifier)
+    confirmed, _item = confirmed_record_identity(project)
+    evidence = identity_evidence_for_project(project)
+    for field, value in evidence.get("identity", {}).items():
+        if field in confirmed and value not in (None, ""):
+            confirmed[field] = value
+    rows = []
+    for run in list_candidate_runs(project):
+        run_id = run.get("run_id", "")
+        candidate = read_run_candidate(project, run_id) if run_id and run_candidate_path(project, run_id).is_file() else {}
+        evaluation = read_run_evaluation(project, run_id)
+        identity = candidate.get("candidate_identity", {})
+        field_results = evaluation.get("field_results", {})
+        summary = evaluation.get("summary", {})
+        rows.append(
+            {
+                "run_id": run_id,
+                "model": run.get("model") or candidate.get("model"),
+                "prompt_version": run.get("prompt_version") or candidate.get("prompt_version"),
+                "input_strategy": run.get("input_strategy") or candidate.get("input_strategy"),
+                "candidate_confidence": identity.get("confidence", "low"),
+                "overall_result": summary.get("overall_result"),
+                "model_utility": summary.get("model_utility"),
+                "field_results": {
+                    field: result_label(field_results.get(field, {}))
+                    for field in ["artist", "title", "label", "catalog_number", "year"]
+                },
+                "evaluated": bool(evaluation),
+                "generated_at": run.get("generated_at") or candidate.get("generated_at"),
+            }
+        )
+    evaluated = [row for row in rows if row.get("evaluated")]
+    best = sorted(evaluated, key=lambda row: utility_rank(row.get("model_utility")), reverse=True)[0] if evaluated else None
+    recommendations = [
+        "Capture close-up label/catalog photos for records when collector-level identification matters.",
+        "Keep LLaVA as baseline; do not promote low-confidence candidates automatically.",
+    ]
+    if any(row.get("field_results", {}).get("catalog_number") == "missing_not_readable" for row in rows):
+        recommendations.append("Fine catalog text requires physical inspection or better photo/OCR input for this item.")
+    return {
+        "project": project,
+        "confirmed_identity": confirmed,
+        "runs": rows,
+        "best_current_use": {
+            "broad_identity": best.get("model") if best else None,
+            "fine_catalog_text": "physical inspection or better photo/OCR required",
+        },
+        "recommendations": recommendations,
+    }
+
+
+def print_visual_model_comparison(comparison: dict) -> None:
+    confirmed = comparison.get("confirmed_identity", {})
+    runs = comparison.get("runs", [])
+    print(f"Record Visual Model Comparison: {comparison.get('project', '')}")
+    print()
+    print("Confirmed identity:")
+    print(f"  Artist: {confirmed.get('artist') or '-'}")
+    print(f"  Title: {confirmed.get('title') or '-'}")
+    print(f"  Label: {confirmed.get('label') or '-'}")
+    print(f"  Catalog number: {confirmed.get('catalog_number') or '-'}")
+    print()
+    print("Runs:")
+    if not runs:
+        print("  none")
+    for row in runs:
+        print(f"  {row.get('model') or '-'} / {row.get('prompt_version') or '-'}")
+        print(f"    run_id: {row.get('run_id')}")
+        print(f"    candidate confidence: {row.get('candidate_confidence') or '-'}")
+        print(f"    overall result: {row.get('overall_result') or 'not evaluated'}")
+        print(f"    utility: {row.get('model_utility') or '-'}")
+        for field, result in row.get("field_results", {}).items():
+            print(f"    {field}: {result}")
+        print()
+    if len(runs) == 1:
+        print("Only one candidate run exists. Add another model run to compare:")
+        print(f"  laia projects record-identify-visual {comparison.get('project', '')} --model llama3.2-vision")
+        print()
+    best = comparison.get("best_current_use", {})
+    print("Best current use:")
+    print(f"  broad identity: {best.get('broad_identity') or '-'}")
+    print(f"  fine catalog text: {best.get('fine_catalog_text') or '-'}")
+    print()
+    print("Recommendations:")
+    for recommendation in comparison.get("recommendations", []):
+        print(f"  {recommendation}")
+
+
+def command_record_identify_visual_compare(args):
+    try:
+        comparison = build_visual_model_comparison(args.identifier)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
+    if getattr(args, "json", False):
+        print(json.dumps(comparison, indent=2))
+    else:
+        print_visual_model_comparison(comparison)
+
+
+def command_record_identify_evaluate_all(args):
+    try:
+        result = evaluate_all_candidate_runs(args.identifier)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+        return
+    print(f"Evaluated: {len(result['evaluated'])}")
+    for row in result["evaluated"]:
+        print(f"  {row['run_id']}: {row['paths']['json']}")
+    if result["skipped"]:
+        print("Skipped:")
+        for row in result["skipped"]:
+            print(f"  {row.get('run_id') or '-'}: {row.get('reason')}")
+
+
 def record_projects_for_batch(prefix: str, start_index: Optional[int], limit: Optional[int]) -> list[str]:
     registry = registry_module()
     rows = [project for project in registry.list_project_ids() if project.startswith(f"{prefix}-")]
@@ -1026,9 +1508,16 @@ def command_record_identify_visual_batch(args):
 
 
 def register_record_visual_identification_subcommands(projects_sub) -> None:
+    models_p = projects_sub.add_parser("vision-models", help="List configured and detected local vision models")
+    models_p.add_argument("--json", action="store_true")
+    models_p.set_defaults(func=command_vision_models)
+
     visual_p = projects_sub.add_parser("record-identify-visual", help="Create an unconfirmed visual identity candidate")
     visual_p.add_argument("identifier")
     visual_p.add_argument("--model", default="llava:latest")
+    visual_p.add_argument("--set-current", action="store_true")
+    visual_p.add_argument("--input-strategy", choices=sorted(INPUT_STRATEGIES), default="approved_photos")
+    visual_p.add_argument("--prompt-version", choices=sorted(PROMPT_VERSIONS), default="record_identity_v1")
     visual_p.add_argument("--json", action="store_true")
     visual_p.set_defaults(func=command_record_identify_visual)
 
@@ -1038,12 +1527,23 @@ def register_record_visual_identification_subcommands(projects_sub) -> None:
 
     evaluate_p = projects_sub.add_parser("record-identify-evaluate", help="Evaluate visual identity candidate against confirmed metadata")
     evaluate_p.add_argument("identifier")
+    evaluate_p.add_argument("--run-id")
     evaluate_p.add_argument("--json", action="store_true")
     evaluate_p.set_defaults(func=command_record_identify_evaluate)
+
+    evaluate_all_p = projects_sub.add_parser("record-identify-evaluate-all", help="Evaluate all visual identity candidate runs")
+    evaluate_all_p.add_argument("identifier")
+    evaluate_all_p.add_argument("--json", action="store_true")
+    evaluate_all_p.set_defaults(func=command_record_identify_evaluate_all)
 
     evaluation_summary_p = projects_sub.add_parser("record-identify-evaluation-summary", help="Show visual identity evaluation summary")
     evaluation_summary_p.add_argument("identifier")
     evaluation_summary_p.set_defaults(func=command_record_identify_evaluation_summary)
+
+    compare_p = projects_sub.add_parser("record-identify-visual-compare", help="Compare visual model runs for a record")
+    compare_p.add_argument("identifier")
+    compare_p.add_argument("--json", action="store_true")
+    compare_p.set_defaults(func=command_record_identify_visual_compare)
 
     confirm_p = projects_sub.add_parser("record-identify-confirm", help="Promote or correct record visual identity")
     confirm_p.add_argument("identifier")

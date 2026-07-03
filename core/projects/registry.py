@@ -4149,6 +4149,11 @@ def register_projects_subcommands(sub):
     except (ImportError, ModuleNotFoundError):
         from core.projects.record_visual_identification import register_record_visual_identification_subcommands
     register_record_visual_identification_subcommands(projects_sub)
+    try:
+        from projects.record_identity_evidence import register_record_identity_evidence_subcommands
+    except (ImportError, ModuleNotFoundError):
+        from core.projects.record_identity_evidence import register_record_identity_evidence_subcommands
+    register_record_identity_evidence_subcommands(projects_sub)
 
     projects_sub.add_parser("list", help="List project records").set_defaults(func=command_projects_list)
 
