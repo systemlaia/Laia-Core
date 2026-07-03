@@ -4144,6 +4144,11 @@ def register_projects_subcommands(sub):
     except (ImportError, ModuleNotFoundError):
         from core.projects.appraisal_context import register_appraisal_context_subcommands
     register_appraisal_context_subcommands(projects_sub)
+    try:
+        from projects.record_visual_identification import register_record_visual_identification_subcommands
+    except (ImportError, ModuleNotFoundError):
+        from core.projects.record_visual_identification import register_record_visual_identification_subcommands
+    register_record_visual_identification_subcommands(projects_sub)
 
     projects_sub.add_parser("list", help="List project records").set_defaults(func=command_projects_list)
 
