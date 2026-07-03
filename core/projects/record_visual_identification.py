@@ -72,6 +72,19 @@ def visual_history_path(identifier: str, timestamp: str) -> Path:
     return identity_candidates_root(identifier) / "history" / f"{stamp}_visual_candidate.json"
 
 
+def evaluation_path(identifier: str) -> Path:
+    return identity_candidates_root(identifier) / "evaluation.json"
+
+
+def evaluation_markdown_path(identifier: str) -> Path:
+    return identity_candidates_root(identifier) / "evaluation.md"
+
+
+def evaluation_history_path(identifier: str, timestamp: str) -> Path:
+    stamp = timestamp.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+    return identity_candidates_root(identifier) / "history" / f"{stamp}_evaluation.json"
+
+
 def read_json(path: Path, default=None):
     if not path.exists():
         return {} if default is None else default
@@ -567,6 +580,415 @@ def command_record_identify_confirm(args):
     print(f"  {result['paths']['appraisal_context']['json']}")
     print(f"  {result['paths']['appraisal_research']['json']}")
     print(f"  {result['paths']['listing_draft']['json']}")
+    print()
+    print("Next:")
+    print(f"  laia projects record-identify-evaluate {result['project']}")
+
+
+def normalize_comparison_text(value: str) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[\u2010-\u2015]", "-", text)
+    text = re.sub(r"[^\w\s-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" -_")
+    text = re.sub(r"^(the|a|an)\s+", "", text)
+    return text
+
+
+def comparison_tokens(value: str) -> set[str]:
+    stopwords = {"a", "an", "and", "the", "in", "of", "on", "for", "to"}
+    return {token for token in normalize_comparison_text(value).split() if token and token not in stopwords}
+
+
+def compare_identity_field(candidate, confirmed) -> dict:
+    candidate_text = string_or_none(candidate)
+    confirmed_text = string_or_none(confirmed)
+    if not confirmed_text:
+        note = "No confirmed value to evaluate."
+        if candidate_text:
+            note = "Candidate claimed value, but no confirmed value exists yet."
+        return {
+            "candidate": candidate_text,
+            "confirmed": confirmed_text,
+            "result": "unconfirmed",
+            "note": note,
+        }
+    if not candidate_text:
+        return {
+            "candidate": candidate_text,
+            "confirmed": confirmed_text,
+            "result": "missing",
+            "note": "Confirmed value exists, but candidate did not provide this field.",
+        }
+    normalized_candidate = normalize_comparison_text(candidate_text)
+    normalized_confirmed = normalize_comparison_text(confirmed_text)
+    if normalized_candidate == normalized_confirmed:
+        result = "match"
+        note = ""
+    elif normalized_candidate in normalized_confirmed or normalized_confirmed in normalized_candidate:
+        result = "partial"
+        note = "One normalized value contains the other."
+    else:
+        candidate_tokens = comparison_tokens(candidate_text)
+        confirmed_tokens = comparison_tokens(confirmed_text)
+        overlap = candidate_tokens & confirmed_tokens
+        shorter = max(1, min(len(candidate_tokens), len(confirmed_tokens)))
+        if overlap and len(overlap) / shorter >= 0.6:
+            result = "partial"
+            note = "Most normalized tokens overlap."
+        else:
+            result = "incorrect"
+            note = "Candidate value does not match confirmed metadata."
+    return {
+        "candidate": candidate_text,
+        "confirmed": confirmed_text,
+        "result": result,
+        "note": note,
+    }
+
+
+def confirmed_record_identity(identifier: str) -> tuple[dict, dict]:
+    sale_items = sale_items_module()
+    item = sale_items.load_sale_item(identifier)
+    if str(item.get("category", "")).strip().lower() != "records":
+        raise ValueError("Visual identification evaluation requires a record sale item.")
+    metadata = item.get("record_metadata", {})
+    identity = {
+        "artist": string_or_none(metadata.get("artist")),
+        "title": string_or_none(metadata.get("title")),
+        "label": string_or_none(metadata.get("record_label") or item.get("manufacturer")),
+        "catalog_number": string_or_none(metadata.get("catalog_number") or item.get("model")),
+        "year": string_or_none(metadata.get("year")),
+    }
+    if not identity.get("artist") or not identity.get("title"):
+        raise ValueError(
+            "No confirmed record identity available.\n"
+            "Confirm or correct candidate first:\n"
+            f"  laia projects record-identify-confirm {project_id(identifier)} ..."
+        )
+    return identity, item
+
+
+def candidate_identity_for_evaluation(candidate: dict) -> dict:
+    identity = candidate.get("candidate_identity", {})
+    return {
+        "artist": string_or_none(identity.get("artist")),
+        "title": string_or_none(identity.get("title")),
+        "label": string_or_none(identity.get("label")),
+        "catalog_number": string_or_none(identity.get("catalog_number")),
+        "year": string_or_none(identity.get("year")),
+    }
+
+
+def manual_research_text(project: str) -> str:
+    appraisal = appraisal_module()
+    research = read_json(appraisal.research_path(project), {})
+    notes = []
+    for note in research.get("manual_notes", []):
+        notes.append(str(note.get("note", "")))
+    return " ".join(notes)
+
+
+def visible_text_evaluation(candidate: dict, confirmed_identity: dict, confirmed_notes: str = "") -> dict:
+    identity = candidate.get("candidate_identity", {})
+    evidence = candidate.get("evidence", {})
+    candidate_visible = []
+    candidate_visible.extend(str(value) for value in list_value(identity.get("visible_text")))
+    for key in ["front_cover_observations", "back_cover_observations", "spine_observations", "uncertain_text"]:
+        candidate_visible.extend(str(value) for value in list_value(evidence.get(key)))
+    confirmed_visible = [
+        value for value in [
+            confirmed_identity.get("artist"),
+            confirmed_identity.get("title"),
+            confirmed_identity.get("label"),
+            confirmed_identity.get("catalog_number"),
+            confirmed_identity.get("year"),
+        ]
+        if value
+    ]
+    confirmed_blob = normalize_comparison_text(" ".join(confirmed_visible + [confirmed_notes]))
+    candidate_blob = normalize_comparison_text(" ".join(candidate_visible))
+    missed = [
+        value for value in confirmed_visible
+        if normalize_comparison_text(value) and normalize_comparison_text(value) not in candidate_blob
+    ]
+    hallucinated = [
+        value for value in candidate_visible
+        if normalize_comparison_text(value) and normalize_comparison_text(value) not in confirmed_blob
+    ]
+    notes = ["Visible text evaluation is conservative until explicit confirmed text fields exist."]
+    return {
+        "candidate_visible_text": candidate_visible,
+        "confirmed_visible_text": confirmed_visible,
+        "missed_confirmed_text": missed,
+        "possible_hallucinated_text": hallucinated,
+        "notes": notes,
+    }
+
+
+def failure_modes_for_results(field_results: dict, candidate: dict) -> list[str]:
+    tags = []
+    for field, result in field_results.items():
+        tags.append(f"{field}_{result.get('result')}")
+        if result.get("result") == "unconfirmed" and result.get("candidate"):
+            tags.append(f"{field}_candidate_unverified")
+    confidence = candidate.get("candidate_identity", {}).get("confidence") or "low"
+    if confidence == "low":
+        tags.append("low_confidence")
+    if any(result.get("candidate") and result.get("result") == "unconfirmed" for result in field_results.values()):
+        tags.append("candidate_unverified_claims")
+    tags.append("human_review_required")
+    return sorted(dict.fromkeys(tags))
+
+
+def evaluation_summary(field_results: dict, candidate: dict) -> dict:
+    counts = {key: 0 for key in ["match", "partial", "missing", "incorrect", "unconfirmed"]}
+    for result in field_results.values():
+        counts[result["result"]] += 1
+    evaluated = len(field_results) - counts["unconfirmed"]
+    if evaluated and counts["incorrect"] == 0 and counts["missing"] == 0 and counts["partial"] == 0:
+        overall = "strong"
+    elif evaluated and counts["incorrect"] == 0 and counts["match"] + counts["partial"] >= max(1, evaluated - 1):
+        overall = "useful"
+    elif evaluated and counts["match"] + counts["partial"] > 0:
+        overall = "mixed"
+    else:
+        overall = "poor"
+    confidence = candidate.get("candidate_identity", {}).get("confidence") or "low"
+    if overall == "strong":
+        utility = "high" if confidence != "low" else "medium"
+    elif overall == "useful" and confidence != "low":
+        utility = "medium"
+    else:
+        utility = "low"
+    return {
+        "evaluated_fields": evaluated,
+        "matches": counts["match"],
+        "partials": counts["partial"],
+        "missing": counts["missing"],
+        "incorrect": counts["incorrect"],
+        "unconfirmed": counts["unconfirmed"],
+        "overall_result": overall,
+        "model_utility": utility,
+        "human_review_required": True,
+    }
+
+
+def evaluation_recommendations(evaluation: dict) -> list[str]:
+    recommendations = ["Keep visual candidates non-authoritative."]
+    modes = set(evaluation.get("failure_modes", []))
+    if any(mode.endswith("_missing") for mode in modes) or any(mode.endswith("_incorrect") for mode in modes):
+        recommendations.append("Use higher-resolution crops for spine/catalog text.")
+        recommendations.append("Consider separate OCR pass for back cover and spine.")
+    if evaluation.get("summary", {}).get("overall_result") in {"useful", "strong"}:
+        recommendations.append("Continue using visual candidates as review prompts, not metadata authority.")
+    return recommendations
+
+
+def build_record_identification_evaluation(identifier: str) -> dict:
+    project = project_id(identifier)
+    candidate_file = visual_candidate_path(project)
+    if not candidate_file.is_file():
+        raise FileNotFoundError(
+            "No visual identification candidate found.\n"
+            "Run:\n"
+            f"  laia projects record-identify-visual {project}"
+        )
+    candidate = read_candidate(project)
+    confirmed_identity, _item = confirmed_record_identity(project)
+    candidate_identity = candidate_identity_for_evaluation(candidate)
+    field_results = {
+        field: compare_identity_field(candidate_identity.get(field), confirmed_identity.get(field))
+        for field in ["artist", "title", "label", "catalog_number", "year"]
+    }
+    visible_eval = visible_text_evaluation(candidate, confirmed_identity, manual_research_text(project))
+    summary = evaluation_summary(field_results, candidate)
+    evaluation = {
+        "project": project,
+        "category": "records",
+        "profile": "records",
+        "candidate_source": {
+            "source": candidate.get("source"),
+            "model": candidate.get("model"),
+            "candidate_path": "appraisal/identity_candidates/visual_candidate.json",
+            "candidate_confidence": candidate.get("candidate_identity", {}).get("confidence") or "low",
+            "candidate_generated_at": candidate.get("generated_at"),
+        },
+        "confirmed_identity": confirmed_identity,
+        "candidate_identity": candidate_identity,
+        "field_results": field_results,
+        "visible_text_evaluation": visible_eval,
+        "summary": summary,
+        "failure_modes": [],
+        "recommendations": [],
+        "generated_at": registry_module().utc_now(),
+    }
+    evaluation["failure_modes"] = failure_modes_for_results(field_results, candidate)
+    evaluation["recommendations"] = evaluation_recommendations(evaluation)
+    return evaluation
+
+
+def render_evaluation_markdown(evaluation: dict) -> str:
+    source = evaluation.get("candidate_source", {})
+    confirmed = evaluation.get("confirmed_identity", {})
+    candidate = evaluation.get("candidate_identity", {})
+    summary = evaluation.get("summary", {})
+    lines = [
+        f"# Visual Identification Evaluation: {evaluation.get('project', '')}",
+        "",
+        "## Candidate",
+        "",
+        f"Source: {source.get('source') or '-'}  ",
+        f"Model: {source.get('model') or '-'}  ",
+        f"Candidate confidence: {source.get('candidate_confidence') or 'low'}  ",
+        "Authority: unconfirmed AI candidate",
+        "",
+        "## Confirmed identity",
+        "",
+        f"Artist: {confirmed.get('artist') or '-'}  ",
+        f"Title: {confirmed.get('title') or '-'}  ",
+        f"Label: {confirmed.get('label') or '-'}  ",
+        f"Catalog number: {confirmed.get('catalog_number') or '-'}",
+        "",
+        "## Candidate identity",
+        "",
+        f"Artist: {candidate.get('artist') or '-'}  ",
+        f"Title: {candidate.get('title') or '-'}  ",
+        f"Label: {candidate.get('label') or '-'}  ",
+        f"Catalog number: {candidate.get('catalog_number') or '-'}",
+        "",
+        "## Field results",
+        "",
+        "| Field | Candidate | Confirmed | Result |",
+        "|---|---|---|---|",
+    ]
+    for field in ["artist", "title", "label", "catalog_number", "year"]:
+        result = evaluation.get("field_results", {}).get(field, {})
+        lines.append(
+            f"| {field} | {result.get('candidate') or '-'} | "
+            f"{result.get('confirmed') or '-'} | {result.get('result') or '-'} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Summary",
+            "",
+            f"Evaluated fields: {summary.get('evaluated_fields', 0)}  ",
+            f"Matches: {summary.get('matches', 0)}  ",
+            f"Partials: {summary.get('partials', 0)}  ",
+            f"Missing: {summary.get('missing', 0)}  ",
+            f"Incorrect: {summary.get('incorrect', 0)}  ",
+            f"Overall result: {summary.get('overall_result', '')}  ",
+            f"Model utility: {summary.get('model_utility', '')}  ",
+            f"Human review required: {'yes' if summary.get('human_review_required') else 'no'}",
+            "",
+            "## Failure modes",
+        ]
+    )
+    lines.extend([f"- {mode}" for mode in evaluation.get("failure_modes", [])] or ["- none"])
+    lines.extend(["", "## Recommendations"])
+    lines.extend([f"- {item}" for item in evaluation.get("recommendations", [])] or ["- none"])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_record_identification_evaluation(identifier: str, evaluation: Optional[dict] = None) -> dict:
+    project = project_id(identifier)
+    evaluation = evaluation or build_record_identification_evaluation(project)
+    root = identity_candidates_root(project)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "history").mkdir(parents=True, exist_ok=True)
+    json_path = evaluation_path(project)
+    md_path = evaluation_markdown_path(project)
+    history_path = evaluation_history_path(project, evaluation["generated_at"])
+    registry = registry_module()
+    registry.write_json(json_path, evaluation)
+    registry.write_json(history_path, evaluation)
+    md_path.write_text(render_evaluation_markdown(evaluation), encoding="utf-8")
+    return {"json": str(json_path), "md": str(md_path), "history": str(history_path)}
+
+
+def record_identification_evaluation_with_paths(identifier: str) -> tuple[dict, dict]:
+    evaluation = build_record_identification_evaluation(identifier)
+    paths = write_record_identification_evaluation(identifier, evaluation)
+    return evaluation, paths
+
+
+def print_evaluation_summary(evaluation: dict, paths: dict) -> None:
+    source = evaluation.get("candidate_source", {})
+    summary = evaluation.get("summary", {})
+    print(f"Visual Identification Evaluation: {evaluation.get('project', '')}")
+    print(f"Source: {source.get('source') or '-'}")
+    print(f"Model: {source.get('model') or '-'}")
+    print(f"Candidate confidence: {source.get('candidate_confidence') or 'low'}")
+    print()
+    print("Field results:")
+    for field in ["artist", "title", "label", "catalog_number", "year"]:
+        print(f"  {field}: {evaluation.get('field_results', {}).get(field, {}).get('result', '-')}")
+    print()
+    print("Summary:")
+    print(f"  Overall result: {summary.get('overall_result', '')}")
+    print(f"  Model utility: {summary.get('model_utility', '')}")
+    print(f"  Human review required: {'yes' if summary.get('human_review_required') else 'no'}")
+    print()
+    print("Failure modes:")
+    for mode in evaluation.get("failure_modes", []):
+        print(f"  {mode}")
+    print()
+    print("Wrote:")
+    print(f"  {paths['json']}")
+    print(f"  {paths['md']}")
+
+
+def command_record_identify_evaluate(args):
+    try:
+        evaluation, paths = record_identification_evaluation_with_paths(args.identifier)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
+    if getattr(args, "json", False):
+        print(json.dumps(evaluation, indent=2))
+    else:
+        print_evaluation_summary(evaluation, paths)
+
+
+def command_record_identify_evaluation_summary(args):
+    try:
+        path = evaluation_path(args.identifier)
+        evaluation = read_json(path) if path.is_file() else build_record_identification_evaluation(args.identifier)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
+    print_evaluation_summary(evaluation, {"json": str(evaluation_path(args.identifier)), "md": str(evaluation_markdown_path(args.identifier))})
+
+
+def command_record_identify_evaluate_batch(args):
+    evaluated = 0
+    skipped_missing_candidate = 0
+    skipped_missing_identity = 0
+    skipped_other = []
+    for project in record_projects_for_batch(args.prefix, None, args.limit):
+        try:
+            record_identification_evaluation_with_paths(project)
+            evaluated += 1
+        except FileNotFoundError:
+            skipped_missing_candidate += 1
+        except ValueError as exc:
+            if "No confirmed record identity available" in str(exc):
+                skipped_missing_identity += 1
+            else:
+                skipped_other.append({"project": project, "reason": str(exc)})
+    result = {
+        "evaluated": evaluated,
+        "skipped_missing_candidate": skipped_missing_candidate,
+        "skipped_missing_confirmed_identity": skipped_missing_identity,
+        "skipped_other": skipped_other,
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+        return
+    print(f"Evaluated: {evaluated}")
+    print(f"Skipped missing candidate: {skipped_missing_candidate}")
+    print(f"Skipped missing confirmed identity: {skipped_missing_identity}")
+    for row in skipped_other:
+        print(f"Skipped {row['project']}: {row['reason']}")
 
 
 def record_projects_for_batch(prefix: str, start_index: Optional[int], limit: Optional[int]) -> list[str]:
@@ -614,6 +1036,15 @@ def register_record_visual_identification_subcommands(projects_sub) -> None:
     review_p.add_argument("identifier")
     review_p.set_defaults(func=command_record_identify_review)
 
+    evaluate_p = projects_sub.add_parser("record-identify-evaluate", help="Evaluate visual identity candidate against confirmed metadata")
+    evaluate_p.add_argument("identifier")
+    evaluate_p.add_argument("--json", action="store_true")
+    evaluate_p.set_defaults(func=command_record_identify_evaluate)
+
+    evaluation_summary_p = projects_sub.add_parser("record-identify-evaluation-summary", help="Show visual identity evaluation summary")
+    evaluation_summary_p.add_argument("identifier")
+    evaluation_summary_p.set_defaults(func=command_record_identify_evaluation_summary)
+
     confirm_p = projects_sub.add_parser("record-identify-confirm", help="Promote or correct record visual identity")
     confirm_p.add_argument("identifier")
     confirm_p.add_argument("--use-candidate", action="store_true")
@@ -635,3 +1066,9 @@ def register_record_visual_identification_subcommands(projects_sub) -> None:
     batch_p.add_argument("--model", default="llava:latest")
     batch_p.add_argument("--json", action="store_true")
     batch_p.set_defaults(func=command_record_identify_visual_batch)
+
+    evaluate_batch_p = projects_sub.add_parser("record-identify-evaluate-batch", help="Evaluate visual identity candidates for records")
+    evaluate_batch_p.add_argument("--prefix", default="record")
+    evaluate_batch_p.add_argument("--limit", type=int)
+    evaluate_batch_p.add_argument("--json", action="store_true")
+    evaluate_batch_p.set_defaults(func=command_record_identify_evaluate_batch)
