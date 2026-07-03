@@ -88,3 +88,11 @@ __pycache__/
 
 # LAIA generated project runtime state
 /projects_registry/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local LAIA working/staging
+video_ingest/working/

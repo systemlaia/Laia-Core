@@ -241,6 +241,7 @@ class PacketRegistryTests(unittest.TestCase):
             env = {
                 "LAIA_PHOTO_PACKET_ROOT": str(Path(tmp) / "photo"),
                 "LAIA_PAPER_PACKET_ROOT": str(Path(tmp) / "paper"),
+                "LAIA_VIDEO_PACKET_ROOT": str(Path(tmp) / "video"),
                 "LAIA_PHOTO_CATALOG_ROOT": str(Path(tmp) / "catalogs"),
             }
             old = os.environ.copy()
@@ -252,8 +253,9 @@ class PacketRegistryTests(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(old)
 
-            self.assertEqual([root.name for root in cfg.roots], ["photo_ingest", "paper_ingest"])
+            self.assertEqual([root.name for root in cfg.roots], ["photo_ingest", "paper_ingest", "video_ingest"])
             self.assertEqual(cfg.roots[1].path, Path(env["LAIA_PAPER_PACKET_ROOT"]))
+            self.assertEqual(cfg.roots[2].path, Path(env["LAIA_VIDEO_PACKET_ROOT"]))
 
     def test_laia_packet_roots_override_known_roots(self):
         with tempfile.TemporaryDirectory() as tmp:

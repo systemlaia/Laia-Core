@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import os
 import re
@@ -313,10 +314,11 @@ def create_cohort(
     description: str = "",
     parent: Optional[str] = None,
     status: str = "new",
+    cohort_id: Optional[str] = None,
 ) -> dict:
     if status not in VALID_COHORT_STATUSES:
         raise SystemExit(f"Invalid cohort status: {status}")
-    cohort_id = slugify(name)
+    cohort_id = slugify(cohort_id or name)
     index = read_cohort_index(packet)
     existing = next((item for item in index["cohorts"] if item.get("cohort_id") == cohort_id), None)
     if existing is not None:
@@ -475,6 +477,113 @@ def preview_for(packet: Path, relative_path: str) -> Path:
     return packet / "originals" / rel
 
 
+def contact_sheet_files(packet: Path, cohort_query: str, limit: Optional[int] = None) -> tuple[dict, list[dict]]:
+    cohort = read_cohort(packet, cohort_query)
+    files = list(cohort.get("files", []))
+    if limit is not None:
+        files = files[:limit]
+    if not files:
+        raise SystemExit("Cohort has no files.")
+    return cohort, files
+
+
+def write_contact_sheet_file_list(packet: Path, cohort: dict, files: list[dict]) -> Path:
+    path = cohort_dir(packet, cohort["cohort_id"]) / "contact_sheet_files.txt"
+    path.write_text("\n".join(item["relative_path"] for item in files) + "\n", encoding="utf-8")
+    return path
+
+
+def build_contact_sheet_html(
+    packet: Path,
+    cohort_query: str,
+    limit: Optional[int] = None,
+    page_size: int = 25,
+    columns: int = 5,
+    use_previews: bool = True,
+) -> dict:
+    cohort, files = contact_sheet_files(packet, cohort_query, limit)
+    folder = cohort_dir(packet, cohort["cohort_id"])
+    files_path = write_contact_sheet_file_list(packet, cohort, files)
+    page_size = max(1, page_size)
+    columns = max(1, columns)
+    cards = []
+    preview_count = 0
+    original_count = 0
+    missing = []
+    for index, item in enumerate(files, 1):
+        relative_path = item["relative_path"]
+        source = preview_for(packet, relative_path) if use_previews else packet / "originals" / relative_path
+        if not source.is_file():
+            missing.append(relative_path)
+            continue
+        if "previews" in source.parts:
+            preview_count += 1
+        else:
+            original_count += 1
+        try:
+            source_url = source.relative_to(folder).as_posix()
+        except ValueError:
+            source_url = os.path.relpath(source, folder).replace(os.sep, "/")
+        if (index - 1) % page_size == 0:
+            section = (index - 1) // page_size + 1
+            cards.append(
+                f'</section><section class="page" id="page-{section}">'
+                f'<h2>Images {index}–{min(index + page_size - 1, len(files))}</h2>'
+            )
+        cards.append(
+            '<article class="card">'
+            f'<a href="{html.escape(source_url, quote=True)}"><img loading="lazy" '
+            f'src="{html.escape(source_url, quote=True)}" alt="{html.escape(relative_path, quote=True)}"></a>'
+            f'<div class="index">{index:03d}</div>'
+            f'<div class="filename">{html.escape(relative_path)}</div>'
+            f'<div class="context">cohort: {html.escape(cohort["cohort_id"])}'
+            + (f' · subject: {html.escape(str(cohort.get("subject_id")))}' if cohort.get("subject_id") else "")
+            + "</div></article>"
+        )
+    output = folder / "contact_sheet.html"
+    output.write_text(
+        """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>"""
+        + html.escape(cohort["name"])
+        + """ — contact sheet</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif}body{margin:0;padding:1rem;background:#181818;color:#eee}
+header{position:sticky;top:0;z-index:2;background:#181818eF;padding:.5rem 0 1rem}h1,h2{margin:.25rem 0}
+nav a{color:#9dc9ff;margin-right:.8rem}.page{display:grid;grid-template-columns:repeat(var(--columns),minmax(150px,1fr));gap:1rem;margin:1rem 0 3rem}
+.page h2{grid-column:1/-1}.card{min-width:0;background:#272727;border:1px solid #444;border-radius:.5rem;padding:.55rem}
+.card img{display:block;width:100%;height:220px;object-fit:contain;background:#111}.index{font-weight:700;margin-top:.5rem}
+.filename{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.context{font-size:11px;color:#aaa;margin-top:.35rem}
+@media(max-width:800px){.page{grid-template-columns:repeat(2,minmax(0,1fr))}.card img{height:180px}}
+</style></head><body style="--columns:"""
+        + str(columns)
+        + """"><header><h1>"""
+        + html.escape(cohort["name"])
+        + f"""</h1><div>{len(files)} files · {preview_count} previews · {original_count} originals</div><nav>"""
+        + " ".join(
+            f'<a href="#page-{page}">Page {page}</a>'
+            for page in range(1, (len(files) + page_size - 1) // page_size + 1)
+        )
+        + """</nav></header>"""
+        + "".join(cards).removeprefix("</section>")
+        + "</section></body></html>\n",
+        encoding="utf-8",
+    )
+    cohort["history"].append(
+        {
+            "event": "contact_sheet_html_generated", "timestamp": utc_now(),
+            "file_count": len(files), "path": str(output), "preview_count": preview_count,
+            "original_count": original_count, "missing": missing,
+        }
+    )
+    write_cohort(packet, cohort)
+    return {
+        "path": str(output), "files_path": str(files_path), "file_count": len(files),
+        "preview_count": preview_count, "original_count": original_count, "missing": missing,
+    }
+
+
 def contact_sheet_font() -> Optional[Path]:
     configured = os.environ.get(CONTACT_SHEET_FONT_ENV)
     if configured:
@@ -524,12 +633,7 @@ def contact_sheet_command(
 
 
 def build_contact_sheet(packet: Path, cohort_query: str, limit: Optional[int] = None, columns: int = 5) -> dict:
-    cohort = read_cohort(packet, cohort_query)
-    files = cohort.get("files", [])
-    if limit is not None:
-        files = files[:limit]
-    if not files:
-        raise SystemExit("Cohort has no files.")
+    cohort, files = contact_sheet_files(packet, cohort_query, limit)
     magick = shutil.which("magick")
     if not magick:
         raise SystemExit("ImageMagick 'magick' command not found.")
@@ -540,8 +644,7 @@ def build_contact_sheet(packet: Path, cohort_query: str, limit: Optional[int] = 
         raise SystemExit(f"Contact-sheet source missing: {missing[0]}")
     source_list = folder / "contact_sheet_sources.txt"
     source_list.write_text("\n".join(str(path) for path in sources) + "\n", encoding="utf-8")
-    files_list = folder / "contact_sheet_files.txt"
-    files_list.write_text("\n".join(item["relative_path"] for item in files) + "\n", encoding="utf-8")
+    files_list = write_contact_sheet_file_list(packet, cohort, files)
     output = folder / "contact_sheet.jpg"
     font = contact_sheet_font()
     command = contact_sheet_command(magick, source_list, output, columns, font=font)

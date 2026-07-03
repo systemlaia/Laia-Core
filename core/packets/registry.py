@@ -35,6 +35,7 @@ except ModuleNotFoundError:
 DEFAULT_PHOTO_PACKET_ROOT = Path("/Volumes/Public/LAIA/packets/photo_ingest")
 DEFAULT_PHOTO_CATALOG_ROOT = Path("/Volumes/Public/LAIA/catalogs/photo_ingest")
 DEFAULT_PAPER_PACKET_ROOT = Path("~/LAIA/Inbox/Ingest/Scans").expanduser()
+DEFAULT_VIDEO_PACKET_ROOT = Path("/Volumes/Public/LAIA/packets/video_ingest")
 DEFAULT_PACKET_EXPORT_ROOT = Path("~/LAIA/exports/packets").expanduser()
 DEFAULT_PACKET_PROJECT_ROOT = Path("~/LAIA/projects").expanduser()
 DEFAULT_PACKET_PROMOTION_ROOT = Path("~/LAIA/promoted").expanduser()
@@ -46,6 +47,18 @@ PAPER_REQUIRED_ITEMS = (
     "metadata",
     "logs",
     "review",
+    "checksums.sha256",
+    "packet_manifest.json",
+    "ingest_report.md",
+)
+VIDEO_REQUIRED_ITEMS = (
+    "originals",
+    "proxy",
+    "stills",
+    "metadata/ffprobe.json",
+    "metadata/technical_summary.json",
+    "review",
+    "logs",
     "checksums.sha256",
     "packet_manifest.json",
     "ingest_report.md",
@@ -88,6 +101,7 @@ class RegistryConfig:
 def config_from_env() -> RegistryConfig:
     photo_packet_root = Path(os.environ.get("LAIA_PHOTO_PACKET_ROOT", DEFAULT_PHOTO_PACKET_ROOT)).expanduser()
     paper_packet_root = Path(os.environ.get("LAIA_PAPER_PACKET_ROOT", DEFAULT_PAPER_PACKET_ROOT)).expanduser()
+    video_packet_root = Path(os.environ.get("LAIA_VIDEO_PACKET_ROOT", DEFAULT_VIDEO_PACKET_ROOT)).expanduser()
     photo_catalog_root = Path(os.environ.get("LAIA_PHOTO_CATALOG_ROOT", DEFAULT_PHOTO_CATALOG_ROOT)).expanduser()
     db_path = Path(
         os.environ.get("LAIA_PACKET_REGISTRY_DB", photo_catalog_root / DEFAULT_REGISTRY_DB_NAME)
@@ -104,6 +118,8 @@ def config_from_env() -> RegistryConfig:
         roots = [PacketRoot(name="photo_ingest", path=photo_packet_root)]
         if os.environ.get("LAIA_PAPER_PACKET_ROOT") or paper_packet_root.exists():
             roots.append(PacketRoot(name="paper_ingest", path=paper_packet_root))
+        if os.environ.get("LAIA_VIDEO_PACKET_ROOT") or video_packet_root.exists():
+            roots.append(PacketRoot(name="video_ingest", path=video_packet_root))
 
     return RegistryConfig(db_path=db_path, roots=tuple(roots))
 
@@ -149,6 +165,14 @@ CREATE TABLE IF NOT EXISTS packets (
     photo_subjects TEXT,
     photo_cohort_count INTEGER,
     photo_cohorts TEXT,
+    video_duration REAL,
+    video_original_filename TEXT,
+    video_codec TEXT,
+    audio_codec TEXT,
+    video_resolution TEXT,
+    video_proxy_present INTEGER,
+    video_still_count INTEGER,
+    video_role TEXT,
     scanned_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -193,6 +217,14 @@ def connect_registry(db_path: Path):
         "ALTER TABLE packets ADD COLUMN photo_subjects TEXT;",
         "ALTER TABLE packets ADD COLUMN photo_cohort_count INTEGER;",
         "ALTER TABLE packets ADD COLUMN photo_cohorts TEXT;",
+        "ALTER TABLE packets ADD COLUMN video_duration REAL;",
+        "ALTER TABLE packets ADD COLUMN video_original_filename TEXT;",
+        "ALTER TABLE packets ADD COLUMN video_codec TEXT;",
+        "ALTER TABLE packets ADD COLUMN audio_codec TEXT;",
+        "ALTER TABLE packets ADD COLUMN video_resolution TEXT;",
+        "ALTER TABLE packets ADD COLUMN video_proxy_present INTEGER;",
+        "ALTER TABLE packets ADD COLUMN video_still_count INTEGER;",
+        "ALTER TABLE packets ADD COLUMN video_role TEXT;",
     ]:
         try:
             conn.execute(sql)
@@ -867,11 +899,43 @@ def registry_record(root_name: str, packet: Path, required_items: Optional[Itera
     packet_type = str(manifest.get("packet_type", ""))
     if required_items is None and packet_type == "laia.paper_ingest":
         required_items = PAPER_REQUIRED_ITEMS
+    if required_items is None and packet_type == "laia.video_ingest":
+        required_items = VIDEO_REQUIRED_ITEMS
     validation = validate_required_items(packet, required_items or STANDARD_REQUIRED_ITEMS)
     try:
         review = read_review_sidecar(packet)
     except Exception:
         review = {"review_status": "unknown"}
+    video_metadata = {
+        "video_duration": 0,
+        "video_original_filename": "",
+        "video_codec": "",
+        "audio_codec": "",
+        "video_resolution": "",
+        "video_proxy_present": 0,
+        "video_still_count": 0,
+        "video_role": "",
+    }
+    if packet_type == "laia.video_ingest":
+        try:
+            summary = json.loads((packet / "metadata" / "technical_summary.json").read_text(encoding="utf-8"))
+        except Exception:
+            summary = {}
+        try:
+            video_review = json.loads((packet / "review" / "review.json").read_text(encoding="utf-8"))
+            review = video_review
+        except Exception:
+            pass
+        video_metadata = {
+            "video_duration": float(summary.get("duration_seconds", manifest.get("duration_seconds", 0)) or 0),
+            "video_original_filename": str(summary.get("filename", manifest.get("original_filename", ""))),
+            "video_codec": str(summary.get("video_codec", manifest.get("video_codec", ""))),
+            "audio_codec": str(summary.get("audio_codec", manifest.get("audio_codec", ""))),
+            "video_resolution": f"{summary.get('width', manifest.get('width', 0))}x{summary.get('height', manifest.get('height', 0))}",
+            "video_proxy_present": int((packet / "proxy").is_dir() and any((packet / "proxy").glob("*.mp4"))),
+            "video_still_count": len(list((packet / "stills").glob("frame_*.jpg"))) if (packet / "stills").is_dir() else 0,
+            "video_role": str(review.get("role", "")),
+        }
     workflow_state = paper_workflow_state(packet) if packet_type == "laia.paper_ingest" else {}
     route = read_routing(packet)
 
@@ -931,6 +995,7 @@ def registry_record(root_name: str, packet: Path, required_items: Optional[Itera
         "photo_subjects": json.dumps(photo_metadata["photo_subjects"]),
         "photo_cohort_count": photo_metadata["photo_cohort_count"],
         "photo_cohorts": json.dumps(photo_metadata["photo_cohorts"]),
+        **video_metadata,
     }
 
 
@@ -950,9 +1015,11 @@ def upsert_registry_record(conn, record: dict) -> None:
             promotion_result, promotion_output_path, promoted_at,
             project_link_count, project_ids,
             photo_subject_count, photo_subjects, photo_cohort_count, photo_cohorts,
+            video_duration, video_original_filename, video_codec, audio_codec,
+            video_resolution, video_proxy_present, video_still_count, video_role,
             scanned_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
         (
             record["packet_path"],
@@ -995,6 +1062,14 @@ def upsert_registry_record(conn, record: dict) -> None:
             record.get("photo_subjects", "[]"),
             record.get("photo_cohort_count", 0),
             record.get("photo_cohorts", "[]"),
+            record.get("video_duration", 0),
+            record.get("video_original_filename", ""),
+            record.get("video_codec", ""),
+            record.get("audio_codec", ""),
+            record.get("video_resolution", ""),
+            record.get("video_proxy_present", 0),
+            record.get("video_still_count", 0),
+            record.get("video_role", ""),
         ),
     )
 
@@ -1721,6 +1796,7 @@ BUILTIN_VIEWS = {
     },
     "photo": {"description": "Photo ingest packets.", "filters": {"packet_type": "laia.photo_ingest", "limit": 0}},
     "paper": {"description": "Paper ingest packets.", "filters": {"packet_type": "laia.paper_ingest", "limit": 0}},
+    "video": {"description": "Video ingest packets.", "filters": {"packet_type": "laia.video_ingest", "limit": 0}},
     "healthy": {
         "description": "Verified packets with no attention condition.",
         "filters": {"verification": "ok", "limit": 0},
@@ -1904,6 +1980,20 @@ def registry_lifecycle(row, packet: Path, route: Optional[dict] = None) -> str:
                 f"  - {item.get('cohort_id', '')}: "
                 f"{item.get('file_count', 0)} files, {item.get('status', '')}{projects}"
             )
+    if row_value(row, "packet_type", "") == "laia.video_ingest":
+        lines.extend(
+            [
+                "",
+                "Video:",
+                f"  duration_seconds: {row_value(row, 'video_duration', 0)}",
+                f"  original_filename: {row_value(row, 'video_original_filename', '')}",
+                f"  video: {row_value(row, 'video_codec', '')} {row_value(row, 'video_resolution', '')}",
+                f"  audio: {row_value(row, 'audio_codec', '') or 'none'}",
+                f"  proxy: {'present' if row_value(row, 'video_proxy_present', 0) else 'missing'}",
+                f"  stills: {row_value(row, 'video_still_count', 0)}",
+                f"  role: {row_value(row, 'video_role', '')}",
+            ]
+        )
     lines.extend(["", "Route:"])
     if row_value(row, "route_status", ""):
         lines.append(f"  route_status: {row_value(row, 'route_status', '')}")
@@ -2034,6 +2124,18 @@ def lifecycle_report_data(row, packet: Path, generated_at: Optional[str] = None,
                 "subjects": photo_subjects if photo_subjects else "",
                 "cohort_count": len(photo_cohorts) if photo_cohorts else "",
                 "cohorts": photo_cohorts if photo_cohorts else "",
+            }
+        ),
+        "video": lifecycle_section(
+            {
+                "duration_seconds": row_value(row, "video_duration", "") if row_value(row, "packet_type", "") == "laia.video_ingest" else "",
+                "original_filename": row_value(row, "video_original_filename", ""),
+                "video_codec": row_value(row, "video_codec", ""),
+                "audio_codec": row_value(row, "audio_codec", ""),
+                "resolution": row_value(row, "video_resolution", ""),
+                "proxy_present": bool(row_value(row, "video_proxy_present", 0)) if row_value(row, "packet_type", "") == "laia.video_ingest" else "",
+                "still_count": row_value(row, "video_still_count", "") if row_value(row, "packet_type", "") == "laia.video_ingest" else "",
+                "role": row_value(row, "video_role", ""),
             }
         ),
         "route": lifecycle_section(
@@ -2258,6 +2360,14 @@ def print_packet_record(row):
                 )
         else:
             print("  none")
+    if row_value(row, "packet_type", "") == "laia.video_ingest":
+        print(f"Duration:             {row_value(row, 'video_duration', 0)} seconds")
+        print(f"Original Filename:    {row_value(row, 'video_original_filename', '')}")
+        print(f"Video:                {row_value(row, 'video_codec', '')} {row_value(row, 'video_resolution', '')}")
+        print(f"Audio:                {row_value(row, 'audio_codec', '') or 'none'}")
+        print(f"Proxy:                {'present' if row_value(row, 'video_proxy_present', 0) else 'missing'}")
+        print(f"Stills:               {row_value(row, 'video_still_count', 0)}")
+        print(f"Role:                 {row_value(row, 'video_role', '')}")
 
 
 def grouped_counts(rows, key: str):

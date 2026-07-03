@@ -1,0 +1,28 @@
+{
+  "roles": [
+    "hero",
+    "front",
+    "rear",
+    "left",
+    "right",
+    "top",
+    "controls",
+    "controls_detail",
+    "ports",
+    "model_label",
+    "serial_label",
+    "accessories",
+    "defect",
+    "detail",
+    "other",
+    "cover_front",
+    "cover_back",
+    "vinyl_a",
+    "vinyl_b",
+    "label_a",
+    "label_b",
+    "spine",
+    "inner_sleeve",
+    "matrix"
+  ]
+}

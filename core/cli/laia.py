@@ -43,6 +43,10 @@ try:
 except (ImportError, ModuleNotFoundError):
     from core.photo_ingest.commands import register_photo_subcommands
 from paper_ingest.standardize import register_paper_subcommands
+try:
+    from video_ingest.commands import register_video_subcommands
+except (ImportError, ModuleNotFoundError):
+    from core.video_ingest.commands import register_video_subcommands
 from packets.registry import register_packets_subcommands
 from projects.registry import (
     command_projects_artifacts,
@@ -1017,6 +1021,7 @@ def build_parser():
     register_projects_subcommands(sub)
     register_paper_subcommands(sub)
     register_photo_subcommands(sub)
+    register_video_subcommands(sub)
 
     workflow_p = sub.add_parser("workflow", help="Workflow orchestration commands")
     workflow_sub = workflow_p.add_subparsers(dest="subcommand")
@@ -1233,6 +1238,8 @@ def main():
     elif args.command == "sync" and args.subcommand == "pull":
         sync_pull(args)
     elif args.command == "photo" and hasattr(args, "func"):
+        args.func(args)
+    elif args.command == "video" and hasattr(args, "func"):
         args.func(args)
     elif args.command == "packets" and hasattr(args, "func"):
         args.func(args)
