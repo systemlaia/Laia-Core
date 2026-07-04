@@ -16,12 +16,16 @@ from core.projects.appraisal_context import (
 from core.projects.record_visual_identification import (
     approved_visual_photos,
     candidate_prompt,
+    compact_candidate_prompt,
     command_record_identify_confirm,
     command_record_identify_review,
+    ensure_transport_health,
     extract_json_object,
+    ollama_visual_chat,
     record_identify_visual,
     visual_candidate_markdown_path,
     visual_candidate_path,
+    vision_transport_profile,
 )
 from core.projects.registry import add_cohort_to_project, ensure_project_record
 from core.projects.sale_items import (
@@ -117,6 +121,41 @@ class RecordVisualIdentificationTests(unittest.TestCase):
         self.assertIn("condition grade", prompt)
         self.assertIn("Return only JSON", prompt)
 
+    def test_compact_prompt_is_available_for_qwen_transport(self):
+        prompt = compact_candidate_prompt()
+        self.assertIn("Return only compact JSON", prompt)
+        self.assertIn("visible_text", prompt)
+        self.assertLess(len(prompt), len(candidate_prompt()))
+
+    def test_qwen_transport_profile_resolves_chat_single_image(self):
+        with patch("core.projects.record_visual_identification.detected_ollama_models", return_value=(["qwen2.5vl:7b"], None)):
+            profile = vision_transport_profile("qwen2.5vl")
+
+        self.assertEqual(profile["resolved_model"], "qwen2.5vl:7b")
+        self.assertEqual(profile["endpoint"], "/api/chat")
+        self.assertEqual(profile["image_mode"], "single_image_first")
+        self.assertEqual(profile["options"]["num_ctx"], 8192)
+
+    def test_health_required_profile_blocks_unhealthy_model(self):
+        class FakeHealth:
+            def read_health_report(self):
+                return {"models": [{"resolved_name": "llama3.2-vision:latest", "healthy": False, "status": "unsupported_architecture"}]}
+
+            def health_rows_by_model(self, report):
+                return {"llama3.2-vision:latest": report["models"][0]}
+
+        profile = {
+            "model": "llama3.2-vision",
+            "resolved_model": "llama3.2-vision:latest",
+            "health_required": True,
+        }
+
+        with patch("core.projects.record_visual_identification.ollama_health_module", return_value=FakeHealth()):
+            with self.assertRaises(RuntimeError) as raised:
+                ensure_transport_health(profile)
+
+        self.assertIn("unsupported_architecture", str(raised.exception))
+
     def test_extract_json_object_accepts_json_like_literal(self):
         parsed = extract_json_object("```json\n{'artist': 'A', 'title': 'B', 'confidence': 'low'}\n```")
 
@@ -152,6 +191,79 @@ class RecordVisualIdentificationTests(unittest.TestCase):
         self.assertTrue(Path(paths["md"]).is_file())
         self.assertTrue(visual_candidate_path("record-002").is_file())
         self.assertTrue(visual_candidate_markdown_path("record-002").is_file())
+
+    def test_llava_default_transport_keeps_full_prompt_and_two_images(self):
+        self.setup_project()
+        self.approve_front_back()
+        captured = {}
+
+        def runner(model, prompt, images):
+            captured["model"] = model
+            captured["prompt"] = prompt
+            captured["images"] = images
+            return self.model_response()
+
+        candidate, _paths = record_identify_visual("record-002", model="llava:latest", runner=runner)
+
+        self.assertEqual(captured["model"], "llava:latest")
+        self.assertEqual(captured["prompt"], candidate_prompt())
+        self.assertEqual(len(captured["images"]), 2)
+        self.assertEqual(candidate["prompt_version"], "record_identity_v1")
+        self.assertEqual(candidate["transport_profile"]["endpoint"], "/api/generate")
+
+    def test_qwen_record_identify_uses_compact_chat_profile_and_front_image(self):
+        self.setup_project()
+        self.approve_front_back()
+        captured = {}
+
+        def runner(model, prompt, images):
+            captured["model"] = model
+            captured["prompt"] = prompt
+            captured["images"] = images
+            return self.model_response("medium")
+
+        with patch("core.projects.record_visual_identification.detected_ollama_models", return_value=(["qwen2.5vl:7b"], None)):
+            candidate, _paths = record_identify_visual("record-002", model="qwen2.5vl", runner=runner)
+
+        self.assertEqual(captured["model"], "qwen2.5vl:7b")
+        self.assertEqual(captured["prompt"], compact_candidate_prompt())
+        self.assertEqual(len(captured["images"]), 1)
+        self.assertEqual(candidate["model"], "qwen2.5vl")
+        self.assertEqual(candidate["resolved_model"], "qwen2.5vl:7b")
+        self.assertEqual(candidate["prompt_version"], "record_identity_compact_v1")
+        self.assertEqual(candidate["transport_profile"]["endpoint"], "/api/chat")
+        self.assertEqual(candidate["transport_profile"]["options"]["num_ctx"], 8192)
+
+    def test_ollama_visual_chat_sends_chat_payload_with_options(self):
+        image_path = self.root / "front.jpg"
+        image_path.write_bytes(JPEG)
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({"message": {"content": "{\"artist\":\"A\"}"}}).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["timeout"] = timeout
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return Response()
+
+        with patch("core.projects.record_visual_identification.ollama_host", return_value="http://127.0.0.1:11434"):
+            with patch("core.projects.record_visual_identification.urllib.request.urlopen", side_effect=fake_urlopen):
+                response = ollama_visual_chat("qwen2.5vl:7b", "prompt", [image_path], {"num_ctx": 8192})
+
+        self.assertEqual(response, "{\"artist\":\"A\"}")
+        self.assertEqual(captured["url"], "http://127.0.0.1:11434/api/chat")
+        self.assertEqual(captured["payload"]["model"], "qwen2.5vl:7b")
+        self.assertEqual(captured["payload"]["options"]["num_ctx"], 8192)
+        self.assertEqual(len(captured["payload"]["messages"][0]["images"]), 1)
 
     def test_nested_visible_text_response_is_salvaged(self):
         self.setup_project()

@@ -23,6 +23,7 @@ INPUT_STRATEGIES = {
 }
 PROMPT_VERSIONS = {
     "record_identity_v1",
+    "record_identity_compact_v1",
     "record_identity_text_only_v1",
     "record_identity_back_cover_v1",
     "record_catalog_text_v1",
@@ -52,6 +53,34 @@ VISION_MODEL_REGISTRY = {
             "notes": "Enable if installed locally.",
         },
     ]
+}
+VISION_TRANSPORT_PROFILES = {
+    "llava:latest": {
+        "endpoint": "/api/generate",
+        "prompt_version_default": "record_identity_v1",
+        "image_mode": "multi_image_supported",
+        "options": {"num_ctx": 4096},
+    },
+    "qwen2.5vl:7b": {
+        "endpoint": "/api/chat",
+        "prompt_version_default": "record_identity_compact_v1",
+        "image_mode": "single_image_first",
+        "options": {"num_ctx": 8192},
+        "expected_latency": "slow",
+    },
+    "llama3.2-vision:latest": {
+        "endpoint": "/api/chat",
+        "prompt_version_default": "record_identity_compact_v1",
+        "image_mode": "single_image_first",
+        "options": {"num_ctx": 8192},
+        "health_required": True,
+    },
+}
+DEFAULT_VISION_TRANSPORT_PROFILE = {
+    "endpoint": "/api/generate",
+    "prompt_version_default": "record_identity_v1",
+    "image_mode": "multi_image_supported",
+    "options": {"num_ctx": 4096},
 }
 
 
@@ -207,6 +236,32 @@ confidence
 Do not estimate price, condition grade, rarity, pressing, or version unless explicitly visible."""
 
 
+def compact_candidate_prompt() -> str:
+    return """Inspect one vinyl record cover image for inventory identity.
+
+Return only compact JSON with these keys:
+artist
+title
+label
+catalog_number
+format
+visible_text
+confidence
+
+Rules:
+- Use only readable text in the image.
+- If a field is not readable, use null.
+- Do not infer pressing, condition, rarity, or value.
+- visible_text must be a short list of exact visible text strings.
+- confidence must be low, medium, or high."""
+
+
+def prompt_for_version(prompt_version: str) -> str:
+    if prompt_version == "record_identity_compact_v1":
+        return compact_candidate_prompt()
+    return candidate_prompt()
+
+
 def model_slug(model: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", str(model or "model")).strip("-").lower()
     return slug or "model"
@@ -221,7 +276,69 @@ def source_for_model(model: str) -> str:
 
 
 def model_is_configured(model: str) -> bool:
-    return any(row.get("name") == model for row in VISION_MODEL_REGISTRY["models"])
+    model_text = str(model or "")
+    model_base = model_text.split(":", 1)[0]
+    for row in VISION_MODEL_REGISTRY["models"]:
+        configured = str(row.get("name") or "")
+        if configured == model_text:
+            return True
+        if ":" not in configured and configured == model_base:
+            return True
+        if ":" in configured and configured.split(":", 1)[0] == model_base:
+            return True
+    return False
+
+
+def installed_vision_model_names() -> list[str]:
+    detected, _error = detected_ollama_models()
+    return detected
+
+
+def resolve_vision_model(model: str, installed: Optional[list[str]] = None) -> str:
+    if not model:
+        return model
+    health = ollama_health_module()
+    installed_models = installed if installed is not None else installed_vision_model_names()
+    resolution = health.resolve_model_name(model, installed_models)
+    return resolution.get("resolved") or model
+
+
+def vision_transport_profile(model: str, installed: Optional[list[str]] = None) -> dict:
+    resolved = resolve_vision_model(model, installed)
+    profile = VISION_TRANSPORT_PROFILES.get(resolved) or VISION_TRANSPORT_PROFILES.get(model) or DEFAULT_VISION_TRANSPORT_PROFILE
+    return {
+        **profile,
+        "model": model,
+        "resolved_model": resolved,
+        "options": dict(profile.get("options") or {}),
+    }
+
+
+def apply_image_mode(image_paths: list[Path], image_mode: str) -> list[Path]:
+    if image_mode == "single_image_first":
+        return image_paths[:1]
+    return image_paths
+
+
+def ensure_transport_health(profile: dict) -> None:
+    if not profile.get("health_required"):
+        return
+    health = ollama_health_module()
+    report = health.read_health_report()
+    rows = health.health_rows_by_model(report)
+    row = rows.get(profile.get("resolved_model")) or rows.get(profile.get("model"))
+    if row and row.get("healthy"):
+        return
+    if row:
+        status = row.get("status") or row.get("error_class") or "unhealthy"
+        raise RuntimeError(
+            f"Vision model health check required for {profile.get('resolved_model')}: {status}. "
+            "Run: laia dev ollama-health --write"
+        )
+    raise RuntimeError(
+        f"Vision model health check required for {profile.get('resolved_model')}. "
+        "Run: laia dev ollama-health --write"
+    )
 
 
 def timestamp_for_id(value: str) -> str:
@@ -253,6 +370,7 @@ def build_run_metadata(
         "model_family": model_family(candidate.get("model")),
         "input_strategy": input_strategy,
         "prompt_version": prompt_version,
+        "transport_profile": candidate.get("transport_profile"),
         "status": "candidate",
         "authority": "unconfirmed_ai_candidate",
         "candidate_path": str(run_candidate_path(project, run_id)),
@@ -374,12 +492,23 @@ def encode_image(path: Path) -> str:
 
 
 def ollama_visual_generate(model: str, prompt: str, image_paths: list[Path]) -> str:
+    profile = vision_transport_profile(model)
+    model_name = profile.get("resolved_model") or model
+    selected_paths = apply_image_mode(image_paths, profile.get("image_mode", "multi_image_supported"))
+    if profile.get("endpoint") == "/api/chat":
+        return ollama_visual_chat(model_name, prompt, selected_paths, profile.get("options") or {})
+    return ollama_visual_generate_request(model_name, prompt, selected_paths, profile.get("options") or {})
+
+
+def ollama_visual_generate_request(model: str, prompt: str, image_paths: list[Path], options: Optional[dict] = None) -> str:
     payload = {
         "model": model,
         "prompt": prompt,
         "images": [encode_image(path) for path in image_paths],
         "stream": False,
     }
+    if options:
+        payload["options"] = options
     request = urllib.request.Request(
         f"{ollama_host().rstrip('/')}/api/generate",
         data=json.dumps(payload).encode("utf-8"),
@@ -392,6 +521,35 @@ def ollama_visual_generate(model: str, prompt: str, image_paths: list[Path]) -> 
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Ollama/LLaVA unavailable: {exc}") from exc
     return str(data.get("response", "")).strip()
+
+
+def ollama_visual_chat(model: str, prompt: str, image_paths: list[Path], options: Optional[dict] = None) -> str:
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [encode_image(path) for path in image_paths],
+            }
+        ],
+        "stream": False,
+    }
+    if options:
+        payload["options"] = options
+    request = urllib.request.Request(
+        f"{ollama_host().rstrip('/')}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=240) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Ollama vision chat unavailable: {exc}") from exc
+    message = data.get("message") or {}
+    return str(message.get("content") or data.get("response") or "").strip()
 
 
 def extract_json_object(text: str) -> dict:
@@ -504,6 +662,7 @@ def normalize_candidate_response(
     model: str,
     input_strategy: str = "approved_photos",
     prompt_version: str = "record_identity_v1",
+    transport_profile: Optional[dict] = None,
 ) -> dict:
     parsed = extract_json_object(raw)
     nested_visible = parsed.get("visible_text") if isinstance(parsed.get("visible_text"), dict) else {}
@@ -528,8 +687,10 @@ def normalize_candidate_response(
         "category": "records",
         "source": source_for_model(model),
         "model": model,
+        "resolved_model": (transport_profile or {}).get("resolved_model") or model,
         "input_strategy": input_strategy,
         "prompt_version": prompt_version,
+        "transport_profile": transport_profile or {},
         "status": "candidate",
         "authority": "unconfirmed_ai_candidate",
         "input_photos": {
@@ -679,19 +840,24 @@ def record_identify_visual(
     model: str = "llava:latest",
     runner: Optional[Callable[[str, str, list[Path]], str]] = None,
     input_strategy: str = "approved_photos",
-    prompt_version: str = "record_identity_v1",
+    prompt_version: Optional[str] = None,
     set_current: bool = False,
 ) -> tuple[dict, dict]:
     project = project_id(identifier)
     if input_strategy not in INPUT_STRATEGIES:
         raise ValueError(f"Invalid input strategy: {input_strategy}")
+    profile = vision_transport_profile(model)
+    prompt_version = prompt_version or profile.get("prompt_version_default") or "record_identity_v1"
     if prompt_version not in PROMPT_VERSIONS:
         raise ValueError(f"Invalid prompt version: {prompt_version}")
     photos = approved_visual_photos(project)
     image_paths = [Path(row["path"]) for role in ["cover_front", "cover_back"] for row in photos[role]]
+    selected_image_paths = apply_image_mode(image_paths, profile.get("image_mode", "multi_image_supported"))
     runner = runner or ollama_visual_generate
-    raw = runner(model, candidate_prompt(), image_paths)
-    candidate = normalize_candidate_response(project, raw, photos, model, input_strategy, prompt_version)
+    if runner is ollama_visual_generate:
+        ensure_transport_health(profile)
+    raw = runner(profile.get("resolved_model") or model, prompt_for_version(prompt_version), selected_image_paths)
+    candidate = normalize_candidate_response(project, raw, photos, model, input_strategy, prompt_version, profile)
     run_paths = write_candidate_run(project, candidate, raw, input_strategy, prompt_version)
     paths = {"run": run_paths}
     if set_current or not visual_candidate_path(project).is_file():
@@ -852,7 +1018,7 @@ def command_record_identify_visual(args):
             args.identifier,
             model=getattr(args, "model", "llava:latest"),
             input_strategy=getattr(args, "input_strategy", "approved_photos"),
-            prompt_version=getattr(args, "prompt_version", "record_identity_v1"),
+            prompt_version=getattr(args, "prompt_version", None),
             set_current=getattr(args, "set_current", False),
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
@@ -1584,7 +1750,7 @@ def register_record_visual_identification_subcommands(projects_sub) -> None:
     visual_p.add_argument("--model", default="llava:latest")
     visual_p.add_argument("--set-current", action="store_true")
     visual_p.add_argument("--input-strategy", choices=sorted(INPUT_STRATEGIES), default="approved_photos")
-    visual_p.add_argument("--prompt-version", choices=sorted(PROMPT_VERSIONS), default="record_identity_v1")
+    visual_p.add_argument("--prompt-version", choices=sorted(PROMPT_VERSIONS), default=None)
     visual_p.add_argument("--json", action="store_true")
     visual_p.set_defaults(func=command_record_identify_visual)
 
