@@ -87,6 +87,14 @@ def record_identity_evidence_module():
     return record_identity_evidence
 
 
+def ollama_health_module():
+    try:
+        from core_client import ollama_health
+    except (ImportError, ModuleNotFoundError):
+        from core.core_client import ollama_health
+    return ollama_health
+
+
 def ollama_host() -> str:
     try:
         from core_client.ollama import ollama_host as configured_host
@@ -272,17 +280,55 @@ def detected_ollama_models() -> tuple[list[str], Optional[str]]:
 
 def configured_vision_models() -> dict:
     detected, error = detected_ollama_models()
-    detected_names = set(detected)
+    health = ollama_health_module()
+    cached_health = health.read_health_report()
+    health_rows = health.health_rows_by_model(cached_health)
     rows = []
     for model in VISION_MODEL_REGISTRY["models"]:
         name = model["name"]
-        installed = name in detected_names or name.split(":", 1)[0] in detected_names
-        rows.append({**model, "installed": installed, "available": model.get("enabled") and installed})
-    return {"models": rows, "detected": detected, "error": error}
+        resolution = health.resolve_model_name(name, detected)
+        health_row = health_rows.get(name) or health_rows.get(resolution.get("resolved"))
+        installed = bool(resolution.get("installed"))
+        rows.append(
+            {
+                **model,
+                "resolved_model": resolution.get("resolved"),
+                "resolution": resolution.get("resolution"),
+                "installed": installed,
+                "available": model.get("enabled") and installed,
+                "healthy": health_row.get("healthy") if health_row else None,
+                "health_error_class": health_row.get("error_class") if health_row else None,
+                "health_recommendation": health_row.get("recommendation") if health_row else None,
+                "health_status": health_row.get("status") if health_row else None,
+            }
+        )
+    return {
+        "models": rows,
+        "detected": detected,
+        "error": error,
+        "health_path": str(health.health_json_path()),
+        "health_available": cached_health is not None,
+        "health_checked_at": cached_health.get("checked_at") if cached_health else None,
+    }
 
 
 def command_vision_models(args):
-    data = configured_vision_models()
+    if getattr(args, "health", False):
+        health = ollama_health_module()
+        report = health.run_ollama_health(write=False)
+        data = configured_vision_models()
+        rows_by_model = health.health_rows_by_model(report)
+        for model in data["models"]:
+            row = rows_by_model.get(model["name"]) or rows_by_model.get(model.get("resolved_model"))
+            if row:
+                model["healthy"] = row.get("healthy")
+                model["health_error_class"] = row.get("error_class")
+                model["health_recommendation"] = row.get("recommendation")
+                model["health_status"] = row.get("status")
+        data["health_available"] = True
+        data["health_checked_at"] = report.get("checked_at")
+    else:
+        data = configured_vision_models()
     if getattr(args, "json", False):
         print(json.dumps(data, indent=2))
         return
@@ -290,8 +336,28 @@ def command_vision_models(args):
     print()
     print("Configured:")
     for model in data["models"]:
-        state = "enabled" if model.get("available") else "not installed / disabled"
-        print(f"  {model['name']:20} {model['role']:32} {state}")
+        if model.get("healthy") is True:
+            state = "enabled / healthy" if model.get("enabled") else "installed / healthy"
+        elif model.get("health_status") in {"failed_to_load", "unsupported_architecture"}:
+            state = f"installed / {model.get('health_status')}"
+        elif model.get("installed"):
+            if model.get("resolved_model") and model.get("resolved_model") != model.get("name"):
+                state = f"installed as {model.get('resolved_model')}"
+            else:
+                state = "installed"
+        else:
+            state = "not installed / disabled"
+        resolved = model.get("resolved_model") or "-"
+        if model.get("healthy") is True:
+            health_state = "healthy"
+        elif model.get("healthy") is False:
+            health_state = model.get("health_error_class") or "unhealthy"
+        else:
+            health_state = "health unknown"
+        print(f"  {model['name']:20} {model['role']:32} {state:24} resolved={resolved} {health_state}")
+    if not data.get("health_available"):
+        print()
+        print("No cached health report found. Run: laia dev ollama-health --write")
     print()
     print("Detected Ollama models:")
     if data.get("error"):
@@ -1510,6 +1576,7 @@ def command_record_identify_visual_batch(args):
 def register_record_visual_identification_subcommands(projects_sub) -> None:
     models_p = projects_sub.add_parser("vision-models", help="List configured and detected local vision models")
     models_p.add_argument("--json", action="store_true")
+    models_p.add_argument("--health", action="store_true", help="Run a live Ollama health check for vision models")
     models_p.set_defaults(func=command_vision_models)
 
     visual_p = projects_sub.add_parser("record-identify-visual", help="Create an unconfirmed visual identity candidate")

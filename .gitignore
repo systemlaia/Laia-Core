@@ -35,6 +35,7 @@ logs/
 index/
 indexes/
 mounts/
+/runtime/ollama/
 /packets/
 snapshots/
 

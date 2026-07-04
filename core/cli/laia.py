@@ -18,6 +18,7 @@ from core_client.ollama import (
     structure_task,
     structure_meal,
 )
+from core_client.ollama_health import command_ollama_health
 from ingest.scan import command_scan
 from librarian.index import command_index
 from librarian.route import command_route
@@ -1209,6 +1210,11 @@ def build_parser():
     dev_process_file_p.add_argument("--model", default="mistral")
     dev_process_file_p.set_defaults(func=dev_process_file)
 
+    dev_ollama_health_p = dev_sub.add_parser("ollama-health", help="Check local Ollama model health")
+    dev_ollama_health_p.add_argument("--json", action="store_true")
+    dev_ollama_health_p.add_argument("--write", action="store_true")
+    dev_ollama_health_p.set_defaults(func=command_ollama_health)
+
     return parser
 
 
@@ -1320,6 +1326,8 @@ def main():
         dev_process_latest(args)
     elif args.command == "dev" and args.subcommand == "process":
         dev_process_file(args)
+    elif args.command == "dev" and args.subcommand == "ollama-health":
+        command_ollama_health(args)
 
     else:
         parser.print_help()
